@@ -48,6 +48,9 @@ COPY agent-runner/ ./
 # Build TypeScript
 RUN npm run build
 
+# Copy CLI tools
+COPY tools/ /usr/local/bin/
+
 # Create workspace directories
 RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/messages /workspace/ipc/tasks /workspace/ipc/input
 

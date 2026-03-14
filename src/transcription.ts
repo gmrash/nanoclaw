@@ -75,10 +75,7 @@ export async function transcribeAudio(
       req.end();
     });
 
-    logger.info(
-      { chars: result.length },
-      'Transcribed voice message',
-    );
+    logger.info({ chars: result.length }, 'Transcribed voice message');
     return result;
   } catch (err) {
     logger.error({ err }, 'OpenAI transcription failed');

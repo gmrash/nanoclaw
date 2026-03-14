@@ -45,16 +45,18 @@ async function sendTelegramMessage(
 /** Download a file from a URL into a Buffer. */
 function downloadFile(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      if (res.statusCode === 302 || res.statusCode === 301) {
-        downloadFile(res.headers.location!).then(resolve, reject);
-        return;
-      }
-      const chunks: Buffer[] = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-      res.on('error', reject);
-    }).on('error', reject);
+    https
+      .get(url, (res) => {
+        if (res.statusCode === 302 || res.statusCode === 301) {
+          downloadFile(res.headers.location!).then(resolve, reject);
+          return;
+        }
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      })
+      .on('error', reject);
   });
 }
 

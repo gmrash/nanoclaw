@@ -241,6 +241,13 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
+  // Pass through extra env vars for container tools (e.g. nirvana CLI)
+  const passthroughEnvVars = ['NIRVANA_USER', 'NIRVANA_PASS', 'OPENAI_API_KEY'];
+  for (const key of passthroughEnvVars) {
+    const val = process.env[key];
+    if (val) args.push('-e', `${key}=${val}`);
+  }
+
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
 
