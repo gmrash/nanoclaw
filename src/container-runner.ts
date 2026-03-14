@@ -170,6 +170,26 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Sync tools from container/tools/ into a per-group writable location.
+  // Only copy files that don't exist yet — agent edits are preserved.
+  const toolsSrc = path.join(process.cwd(), 'container', 'tools');
+  const groupToolsDir = path.join(DATA_DIR, 'sessions', group.folder, 'tools');
+  if (fs.existsSync(toolsSrc)) {
+    fs.mkdirSync(groupToolsDir, { recursive: true, mode: 0o777 });
+    for (const file of fs.readdirSync(toolsSrc)) {
+      const dstFile = path.join(groupToolsDir, file);
+      if (!fs.existsSync(dstFile)) {
+        fs.cpSync(path.join(toolsSrc, file), dstFile);
+        fs.chmodSync(dstFile, 0o755);
+      }
+    }
+  }
+  mounts.push({
+    hostPath: groupToolsDir,
+    containerPath: '/workspace/tools',
+    readonly: false,
+  });
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -230,6 +250,9 @@ function buildContainerArgs(
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+
+  // Add writable tools directory to PATH so agent-edited tools are found
+  args.push('-e', 'PATH=/workspace/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin');
 
   // Route API traffic through the credential proxy (containers never see real secrets)
   args.push(

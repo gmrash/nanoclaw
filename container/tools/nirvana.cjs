@@ -142,7 +142,7 @@ async function main() {
     console.log(`NirvanaHQ CLI
 
 Commands:
-  list [state]          List tasks (inbox|next|waiting|scheduled|someday|done|all)
+  list [state]          List tasks (inbox|next|waiting|scheduled|someday|done|focus|all)
   projects              List projects
   search <query>        Search tasks by name
   add <name> [--note N] [--state S] [--due YYYY-MM-DD] [--project ID]
@@ -167,10 +167,13 @@ Task IDs: use first 8 chars of the UUID`);
     let filtered;
     if (stateFilter === 'all') {
       filtered = tasks.filter(t => t.state < 6);
+    } else if (stateFilter === 'focus') {
+      filtered = tasks.filter(t => t.seqt && t.seqt > 0 && t.state < 6);
+      filtered.sort((a, b) => a.seqt - b.seqt);
     } else {
       const stateCode = STATE_NAMES[stateFilter];
       if (stateCode === undefined) {
-        console.error(`Unknown state: ${stateFilter}. Use: inbox|next|waiting|scheduled|someday|done|all`);
+        console.error(`Unknown state: ${stateFilter}. Use: inbox|next|waiting|scheduled|someday|done|focus|all`);
         process.exit(1);
       }
       filtered = tasks.filter(t => t.state === stateCode);

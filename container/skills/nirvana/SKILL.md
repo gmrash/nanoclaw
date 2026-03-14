@@ -20,7 +20,7 @@ nirvana search meeting     # Search by name
 
 | Command | Description |
 |---------|-------------|
-| `nirvana list [state]` | List tasks. States: inbox, next, waiting, scheduled, someday, done, all |
+| `nirvana list [state]` | List tasks. States: inbox, next, waiting, scheduled, someday, done, focus, all |
 | `nirvana projects` | List active projects |
 | `nirvana search <query>` | Search tasks by name |
 | `nirvana add <name> [opts]` | Add task. Options: `--note`, `--state`, `--due YYYY-MM-DD`, `--start YYYY-MM-DD`, `--project ID` |
@@ -36,7 +36,9 @@ Use the first 8 characters of the UUID shown in list/search output.
 
 ## States
 
-inbox, next, waiting, scheduled, someday, later, done
+inbox, next, waiting, scheduled, someday, later, done, focus
+
+- `focus` shows starred/focused tasks (sorted by priority)
 
 ## Tips
 
