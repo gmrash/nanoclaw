@@ -38,6 +38,10 @@ When working as a sub-agent or teammate, only use `send_message` if instructed t
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
 
+## Skill Updates
+
+When the user tells you to do something a specific way (e.g. "always do X like this", "when doing Y, use Z approach"), update the relevant skill file in `/home/node/.claude/skills/` to reflect that rule. If no matching skill exists, create a new one. This ensures the instruction persists across sessions. After updating or creating a skill, always tell the user which skill was changed and what was added.
+
 ## Memory
 
 The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
