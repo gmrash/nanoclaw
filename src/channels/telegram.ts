@@ -1,4 +1,6 @@
+import fs from 'fs';
 import https from 'https';
+import path from 'path';
 import { Api, Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
@@ -218,7 +220,43 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      try {
+        // Get the largest photo (last in the array)
+        const photos = ctx.message.photo;
+        const largest = photos[photos.length - 1];
+        const file = await ctx.api.getFile(largest.file_id);
+        const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+        const imageBuffer = await downloadFile(url);
+
+        // Save to group folder
+        const photosDir = path.join('groups', group.folder, 'photos');
+        fs.mkdirSync(photosDir, { recursive: true });
+        const ext = file.file_path?.split('.').pop() || 'jpg';
+        const filename = `${Date.now()}.${ext}`;
+        const filepath = path.join(photosDir, filename);
+        fs.writeFileSync(filepath, imageBuffer);
+
+        const caption = ctx.message.caption
+          ? ` ${ctx.message.caption}`
+          : '';
+        storeNonText(
+          ctx,
+          `[Photo: /workspace/group/photos/${filename}]${caption}`,
+        );
+        logger.info(
+          { chatJid, filename, size: imageBuffer.length },
+          'Saved Telegram photo',
+        );
+      } catch (err) {
+        logger.error({ err }, 'Failed to download Telegram photo');
+        storeNonText(ctx, '[Photo]');
+      }
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', async (ctx) => {
       const chatJid = `tg:${ctx.chat.id}`;

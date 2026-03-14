@@ -147,6 +147,7 @@ function buildVolumeMounts(
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/
+  // Only copy files that don't exist yet — agent edits are preserved.
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
@@ -154,7 +155,13 @@ function buildVolumeMounts(
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
       const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
+      fs.mkdirSync(dstDir, { recursive: true });
+      for (const file of fs.readdirSync(srcDir)) {
+        const dstFile = path.join(dstDir, file);
+        if (!fs.existsSync(dstFile)) {
+          fs.cpSync(path.join(srcDir, file), dstFile);
+        }
+      }
     }
   }
   mounts.push({
