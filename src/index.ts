@@ -111,8 +111,9 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   registeredGroups[jid] = group;
   setRegisteredGroup(jid, group);
 
-  // Create group folder
-  fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
+  // Create group folder with writable permissions for container (node user)
+  fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true, mode: 0o777 });
+  fs.chmodSync(groupDir, 0o777);
 
   logger.info(
     { jid, name: group.name, folder: group.folder },
