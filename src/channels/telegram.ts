@@ -68,6 +68,8 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  // Track the last message_thread_id per chat for topic/forum replies
+  private threadIds: Map<string, number> = new Map();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
@@ -114,6 +116,11 @@ export class TelegramChannel implements Channel {
       const chatJid = `tg:${ctx.chat.id}`;
       let content = ctx.message.text;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
+
+      // Track forum topic thread ID for replies
+      if (ctx.message.message_thread_id) {
+        this.threadIds.set(chatJid, ctx.message.message_thread_id);
+      }
       const senderName =
         ctx.from?.first_name ||
         ctx.from?.username ||
@@ -192,6 +199,11 @@ export class TelegramChannel implements Channel {
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
 
+      // Track forum topic thread ID for replies
+      if (ctx.message.message_thread_id) {
+        this.threadIds.set(chatJid, ctx.message.message_thread_id);
+      }
+
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
         ctx.from?.first_name ||
@@ -241,9 +253,7 @@ export class TelegramChannel implements Channel {
         const filepath = path.join(photosDir, filename);
         fs.writeFileSync(filepath, imageBuffer);
 
-        const caption = ctx.message.caption
-          ? ` ${ctx.message.caption}`
-          : '';
+        const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
         storeNonText(
           ctx,
           `[Photo: /workspace/group/photos/${filename}]${caption}`,
@@ -321,17 +331,20 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
+      const threadId = this.threadIds.get(jid);
+      const sendOpts = threadId ? { message_thread_id: threadId } : {};
 
       // Telegram has a 4096 character limit per message — split if needed
       const MAX_LENGTH = 4096;
       if (text.length <= MAX_LENGTH) {
-        await sendTelegramMessage(this.bot.api, numericId, text);
+        await sendTelegramMessage(this.bot.api, numericId, text, sendOpts);
       } else {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
           await sendTelegramMessage(
             this.bot.api,
             numericId,
             text.slice(i, i + MAX_LENGTH),
+            sendOpts,
           );
         }
       }
