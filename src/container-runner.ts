@@ -252,7 +252,10 @@ function buildContainerArgs(
   args.push('-e', `TZ=${TIMEZONE}`);
 
   // Add writable tools directory to PATH so agent-edited tools are found
-  args.push('-e', 'PATH=/workspace/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin');
+  args.push(
+    '-e',
+    'PATH=/workspace/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+  );
 
   // Route API traffic through the credential proxy (containers never see real secrets)
   args.push(
