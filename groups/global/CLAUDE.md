@@ -38,6 +38,14 @@ When working as a sub-agent or teammate, only use `send_message` if instructed t
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
 
+**IMPORTANT: Only these directories persist between restarts:**
+- `/workspace/group/` — group files, data, credentials, config
+- `/workspace/tools/` — CLI tools you can edit
+- `/home/node/.claude/skills/` — your skills
+- `/home/node/.claude/` — Claude settings and memory
+
+Everything else (e.g. `/home/node/.config/`, `/tmp/`, `/home/node/node_modules/`) is destroyed when the container restarts. NEVER save credentials, config, or important data outside the persistent directories above. Always use `/workspace/group/` for credentials and data files.
+
 ## Skill Updates
 
 When the user tells you to do something a specific way (e.g. "always do X like this", "when doing Y, use Z approach"), update the relevant skill file in `/home/node/.claude/skills/` to reflect that rule. If no matching skill exists, create a new one. This ensures the instruction persists across sessions. After updating or creating a skill, always tell the user which skill was changed and what was added.

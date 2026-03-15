@@ -22,11 +22,7 @@ const MAX_MESSAGE_LENGTH = 4000;
 // (BotMessageEvent, subtype 'bot_message') so we can track our own output.
 type HandledMessageEvent = GenericMessageEvent | BotMessageEvent;
 
-export interface SlackChannelOpts {
-  onMessage: OnInboundMessage;
-  onChatMetadata: OnChatMetadata;
-  registeredGroups: () => Record<string, RegisteredGroup>;
-}
+export type SlackChannelOpts = ChannelOpts;
 
 export class SlackChannel implements Channel {
   name = 'slack';
@@ -66,6 +62,33 @@ export class SlackChannel implements Channel {
   }
 
   private setupEventHandlers(): void {
+    // Auto-register channels when the bot is added
+    this.app.event('member_joined_channel', async ({ event }) => {
+      if (event.user !== this.botUserId) return;
+      const jid = `slack:${event.channel}`;
+      const groups = this.opts.registeredGroups();
+      if (groups[jid]) return; // already registered
+
+      // Resolve channel name
+      let channelName = event.channel;
+      try {
+        const info = await this.app.client.conversations.info({
+          channel: event.channel,
+        });
+        channelName = info.channel?.name || event.channel;
+      } catch {
+        // use channel ID as fallback name
+      }
+
+      if (this.opts.onAutoRegister) {
+        this.opts.onAutoRegister(jid, channelName, 'slack');
+        logger.info(
+          { jid, channelName },
+          'Auto-registered Slack channel',
+        );
+      }
+    });
+
     // Use app.event('message') instead of app.message() to capture all
     // message subtypes including bot_message (needed to track our own output)
     this.app.event('message', async ({ event }) => {
@@ -94,8 +117,7 @@ export class SlackChannel implements Channel {
       const groups = this.opts.registeredGroups();
       if (!groups[jid]) return;
 
-      const isBotMessage =
-        !!msg.bot_id || msg.user === this.botUserId;
+      const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
 
       let senderName: string;
       if (isBotMessage) {
@@ -113,7 +135,10 @@ export class SlackChannel implements Channel {
       let content = msg.text;
       if (this.botUserId && !isBotMessage) {
         const mentionPattern = `<@${this.botUserId}>`;
-        if (content.includes(mentionPattern) && !TRIGGER_PATTERN.test(content)) {
+        if (
+          content.includes(mentionPattern) &&
+          !TRIGGER_PATTERN.test(content)
+        ) {
           content = `@${ASSISTANT_NAME} ${content}`;
         }
       }
@@ -142,10 +167,7 @@ export class SlackChannel implements Channel {
       this.botUserId = auth.user_id as string;
       logger.info({ botUserId: this.botUserId }, 'Connected to Slack');
     } catch (err) {
-      logger.warn(
-        { err },
-        'Connected to Slack but failed to get bot user ID',
-      );
+      logger.warn({ err }, 'Connected to Slack but failed to get bot user ID');
     }
 
     this.connected = true;
@@ -245,9 +267,7 @@ export class SlackChannel implements Channel {
     }
   }
 
-  private async resolveUserName(
-    userId: string,
-  ): Promise<string | undefined> {
+  private async resolveUserName(userId: string): Promise<string | undefined> {
     if (!userId) return undefined;
 
     const cached = this.userNameCache.get(userId);

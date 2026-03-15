@@ -39,6 +39,7 @@ import {
   setRegisteredGroup,
   setRouterState,
   setSession,
+  deleteSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
@@ -332,6 +333,16 @@ async function runAgent(
     }
 
     if (output.status === 'error') {
+      // Stale session: Claude Code lost the conversation. Clear it so the
+      // next retry starts fresh instead of looping on the same dead session.
+      if (output.error?.includes('No conversation found with session ID')) {
+        logger.warn(
+          { group: group.name, folder: group.folder },
+          'Stale session detected, clearing for fresh retry',
+        );
+        delete sessions[group.folder];
+        deleteSession(group.folder);
+      }
       logger.error(
         { group: group.name, error: output.error },
         'Container agent error',
@@ -574,6 +585,18 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+    onAutoRegister: (jid: string, name: string, channel: string) => {
+      // Use channel ID from JID as folder suffix for safe, unique naming
+      const channelId = jid.replace(/^[^:]+:/, '').toLowerCase();
+      const folder = `${channel}_${channelId}`;
+      registerGroup(jid, {
+        name,
+        folder,
+        trigger: `@${ASSISTANT_NAME}`,
+        added_at: new Date().toISOString(),
+        requiresTrigger: false,
+      });
+    },
   };
 
   // Create and connect all registered channels.

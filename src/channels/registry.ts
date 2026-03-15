@@ -5,10 +5,17 @@ import {
   RegisteredGroup,
 } from '../types.js';
 
+export type OnAutoRegister = (
+  jid: string,
+  name: string,
+  channel: string,
+) => void;
+
 export interface ChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  onAutoRegister?: OnAutoRegister;
 }
 
 export type ChannelFactory = (opts: ChannelOpts) => Channel | null;
