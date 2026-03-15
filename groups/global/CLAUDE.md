@@ -75,6 +75,14 @@ User has two email accounts:
 
 When user says "почта" or "письма" without specifying — ask which: рабочая или личная.
 
+## ClickUp
+
+User has a ClickUp workspace. Use the `clickup` skill to manage tasks, lists, and projects. Credentials are in `/workspace/shared-credentials/clickup/credentials.json`.
+
+## Notion
+
+User has a Notion workspace. Use the `notion` skill to search, read, create, and update pages and databases. Credentials are in `/workspace/shared-credentials/notion/credentials.json`. The integration only sees pages that were explicitly shared with it.
+
 ## Message Formatting
 
 NEVER use markdown. Only use WhatsApp/Telegram formatting:
