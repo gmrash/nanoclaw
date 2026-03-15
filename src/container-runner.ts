@@ -155,11 +155,12 @@ function buildVolumeMounts(
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
       const dstDir = path.join(skillsDst, skillDir);
-      fs.mkdirSync(dstDir, { recursive: true });
+      fs.mkdirSync(dstDir, { recursive: true, mode: 0o777 });
       for (const file of fs.readdirSync(srcDir)) {
         const dstFile = path.join(dstDir, file);
         if (!fs.existsSync(dstFile)) {
           fs.cpSync(path.join(srcDir, file), dstFile);
+          fs.chmodSync(dstFile, 0o666);
         }
       }
     }
@@ -187,6 +188,16 @@ function buildVolumeMounts(
   mounts.push({
     hostPath: groupToolsDir,
     containerPath: '/workspace/tools',
+    readonly: false,
+  });
+
+  // Mount shared credentials (Google OAuth etc.) into every container.
+  // Stored centrally so all groups share the same auth without re-authenticating.
+  const sharedCredsDir = path.join(DATA_DIR, 'shared-credentials');
+  fs.mkdirSync(sharedCredsDir, { recursive: true, mode: 0o777 });
+  mounts.push({
+    hostPath: sharedCredsDir,
+    containerPath: '/workspace/shared-credentials',
     readonly: false,
   });
 

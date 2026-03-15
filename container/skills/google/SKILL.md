@@ -7,7 +7,7 @@ allowed-tools: Bash(node:*)
 # Google Workspace Access
 
 ## Credentials
-Stored at: `/workspace/group/google-credentials.json`
+Stored at: `/workspace/shared-credentials/google/credentials.json`
 
 If the file doesn't exist, tell the user that Google credentials need to be set up (OAuth flow).
 
@@ -18,7 +18,7 @@ Always use the googleapis npm package at `/home/node/node_modules/googleapis`.
 ### Setup auth client (use in every script):
 ```js
 const { google } = require('/home/node/node_modules/googleapis');
-const creds = require('/workspace/group/google-credentials.json');
+const creds = require('/workspace/shared-credentials/google/credentials.json');
 
 const oauth2Client = new google.auth.OAuth2(creds.client_id, creds.client_secret, creds.redirect_uri);
 oauth2Client.setCredentials({ access_token: creds.access_token, refresh_token: creds.refresh_token });
@@ -63,5 +63,5 @@ await drive.files.list({ pageSize: 10, fields: 'files(id, name, mimeType)' });
 ## Tips
 - The access token auto-refreshes via refresh_token
 - User email: gmrash@gmail.com
-- After any API call, if tokens were refreshed, save updated credentials back to `/workspace/group/google-credentials.json`
+- After any API call, if tokens were refreshed, save updated credentials back to `/workspace/shared-credentials/google/credentials.json`
 - Credentials are per-group — each channel has its own file. If missing, the user needs to re-authenticate.

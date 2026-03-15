@@ -586,9 +586,22 @@ async function main(): Promise<void> {
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
     onAutoRegister: (jid: string, name: string, channel: string) => {
-      // Use channel ID from JID as folder suffix for safe, unique naming
-      const channelId = jid.replace(/^[^:]+:/, '').toLowerCase();
-      const folder = `${channel}_${channelId}`;
+      // Transliterate Cyrillic to Latin for readable folder names
+      const cyr = 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя';
+      const lat = 'abvgdeejziyklmnoprstufhcchshshhyeyuya'.match(/.{1,2}/g)!;
+      const cyrMap: Record<string, string> = {};
+      // prettier-ignore
+      const latArr = ['a','b','v','g','d','e','yo','zh','z','i','y','k','l','m','n','o','p','r','s','t','u','f','h','ts','ch','sh','shch','','y','','e','yu','ya'];
+      for (let i = 0; i < cyr.length; i++) cyrMap[cyr[i]] = latArr[i];
+      const transliterated = name
+        .toLowerCase()
+        .split('')
+        .map((c) => cyrMap[c] ?? c)
+        .join('')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 40);
+      const folder = `${channel}_${transliterated || jid.replace(/^[^:]+:/, '').toLowerCase()}`;
       registerGroup(jid, {
         name,
         folder,

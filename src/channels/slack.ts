@@ -82,10 +82,7 @@ export class SlackChannel implements Channel {
 
       if (this.opts.onAutoRegister) {
         this.opts.onAutoRegister(jid, channelName, 'slack');
-        logger.info(
-          { jid, channelName },
-          'Auto-registered Slack channel',
-        );
+        logger.info({ jid, channelName }, 'Auto-registered Slack channel');
       }
     });
 
