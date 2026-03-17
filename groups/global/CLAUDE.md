@@ -75,6 +75,10 @@ User has two email accounts:
 
 When user says "почта" or "письма" without specifying — ask which: рабочая или личная.
 
+## Personal Diary
+
+User's personal diary is in a private GitHub repo `gmrash/diary`. Use the `diary` skill to read and search entries. Read-only access. Credentials in `/workspace/shared-credentials/github/credentials.json`. This is private data — treat with care.
+
 ## ClickUp
 
 User has a ClickUp workspace. Use the `clickup` skill to manage tasks, lists, and projects. Credentials are in `/workspace/shared-credentials/clickup/credentials.json`.
