@@ -99,13 +99,18 @@ const STATE_NAMES = Object.fromEntries(
   Object.entries(STATES).map(([k, v]) => [v, parseInt(k)])
 );
 
-function formatTask(t) {
+function formatTask(t, tagMap) {
   const state = STATES[t.state] || `state:${t.state}`;
   const due = t.duedate ? ` due:${t.duedate}` : '';
   const start = t.startdate ? ` start:${t.startdate}` : '';
   const project = t.ps ? ` project:${t.ps}` : '';
+  const tagNames = (t.tags || '').split(',').filter(Boolean).map(k => {
+    const tag = tagMap && tagMap[k.trim()];
+    return tag ? tag.key : k.trim();
+  });
+  const tagsStr = tagNames.length > 0 ? ` [${tagNames.join(', ')}]` : '';
   const note = t.note ? `\n    Note: ${t.note.slice(0, 200)}` : '';
-  return `  ${t.id.slice(0, 8)} | ${state.padEnd(10)} | ${t.name}${due}${start}${project}${note}`;
+  return `  ${t.id.slice(0, 8)} | ${state.padEnd(10)} | ${t.name}${due}${start}${project}${tagsStr}${note}`;
 }
 
 async function fetchAll(token) {
@@ -116,14 +121,14 @@ async function fetchAll(token) {
   const tags = {};
   for (const item of res.results) {
     if (item.task) {
-      for (const t of Array.isArray(item.task) ? item.task : [item.task]) {
-        if (t.type === 1) projects.push(t);
-        else tasks.push(t);
-      }
+      const t = item.task;
+      if (t.type === 1) projects.push(t);
+      else tasks.push(t);
     }
     if (item.tag) {
-      for (const t of Array.isArray(item.tag) ? item.tag : [item.tag]) {
-        tags[t.id] = t;
+      const t = item.tag;
+      if (t.key && t.deleted === '0') {
+        tags[t.key] = t;
       }
     }
   }
@@ -153,8 +158,10 @@ Commands:
                         Edit task fields
   delete <id>           Trash a task
   show <id>             Show task details
+  tags                  List all tags/contexts
+  tagged <tag>          List tasks with a specific tag
 
-States: inbox, next, waiting, scheduled, someday, later, done
+States: inbox, next, waiting, scheduled, someday, later, done, focus
 Task IDs: use first 8 chars of the UUID`);
     return;
   }
@@ -163,7 +170,7 @@ Task IDs: use first 8 chars of the UUID`);
 
   if (cmd === 'list') {
     const stateFilter = args[0] || 'next';
-    const { tasks } = await fetchAll(token);
+    const { tasks, tags } = await fetchAll(token);
     let filtered;
     if (stateFilter === 'all') {
       filtered = tasks.filter(t => t.state < 6);
@@ -183,7 +190,7 @@ Task IDs: use first 8 chars of the UUID`);
       return;
     }
     console.log(`Tasks (${stateFilter}): ${filtered.length}`);
-    for (const t of filtered) console.log(formatTask(t));
+    for (const t of filtered) console.log(formatTask(t, tags));
 
   } else if (cmd === 'projects') {
     const { projects } = await fetchAll(token);
@@ -194,13 +201,35 @@ Task IDs: use first 8 chars of the UUID`);
       console.log(`  ${p.id.slice(0, 8)} | ${p.name} (${seq})`);
     }
 
+  } else if (cmd === 'tags') {
+    const { tags } = await fetchAll(token);
+    const types = { 0: 'context', 1: 'area', 2: 'contact', 3: 'context' };
+    console.log(`Tags: ${Object.keys(tags).length}`);
+    for (const [key, t] of Object.entries(tags)) {
+      const type = types[t.type] || `type:${t.type}`;
+      const color = t.color ? ` (${t.color})` : '';
+      console.log(`  ${type.padEnd(8)} | ${key}${color}`);
+    }
+
+  } else if (cmd === 'tagged') {
+    const tagName = args.join(' ');
+    if (!tagName) { console.error('Usage: nirvana tagged <tag name>'); process.exit(1); }
+    const { tasks, tags } = await fetchAll(token);
+    const found = tasks.filter(t => {
+      if (t.state >= 6) return false;
+      const taskTags = (t.tags || '').split(',').map(s => s.trim()).filter(Boolean);
+      return taskTags.some(k => k.toLowerCase() === tagName.toLowerCase());
+    });
+    console.log(`Tasks tagged "${tagName}": ${found.length}`);
+    for (const t of found) console.log(formatTask(t, tags));
+
   } else if (cmd === 'search') {
     const query = args.join(' ').toLowerCase();
     if (!query) { console.error('Usage: nirvana search <query>'); process.exit(1); }
-    const { tasks } = await fetchAll(token);
+    const { tasks, tags } = await fetchAll(token);
     const found = tasks.filter(t => t.state < 6 && t.name?.toLowerCase().includes(query));
     console.log(`Found: ${found.length}`);
-    for (const t of found) console.log(formatTask(t));
+    for (const t of found) console.log(formatTask(t, tags));
 
   } else if (cmd === 'add') {
     const name = [];
