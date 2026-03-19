@@ -382,7 +382,11 @@ export class TelegramChannel implements Channel {
     }
   }
 
-  async sendPhoto(jid: string, photoPath: string, caption?: string): Promise<void> {
+  async sendPhoto(
+    jid: string,
+    photoPath: string,
+    caption?: string,
+  ): Promise<void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
       return;
@@ -395,10 +399,54 @@ export class TelegramChannel implements Channel {
       if (threadId) sendOpts.message_thread_id = threadId;
       if (caption) sendOpts.caption = caption;
 
-      await this.bot.api.sendPhoto(numericId, new InputFile(photoPath), sendOpts);
+      await this.bot.api.sendPhoto(
+        numericId,
+        new InputFile(photoPath),
+        sendOpts,
+      );
       logger.info({ jid, photoPath }, 'Telegram photo sent');
     } catch (err) {
       logger.error({ jid, photoPath, err }, 'Failed to send Telegram photo');
+    }
+  }
+
+  async sendDocument(jid: string, filePath: string, caption?: string): Promise<void> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return;
+    }
+
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      const threadId = this.threadIds.get(jid);
+      const sendOpts: Record<string, unknown> = {};
+      if (threadId) sendOpts.message_thread_id = threadId;
+      if (caption) sendOpts.caption = caption;
+
+      await this.bot.api.sendDocument(numericId, new InputFile(filePath), sendOpts);
+      logger.info({ jid, filePath }, 'Telegram document sent');
+    } catch (err) {
+      logger.error({ jid, filePath, err }, 'Failed to send Telegram document');
+    }
+  }
+
+  async sendVideo(jid: string, videoPath: string, caption?: string): Promise<void> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return;
+    }
+
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      const threadId = this.threadIds.get(jid);
+      const sendOpts: Record<string, unknown> = {};
+      if (threadId) sendOpts.message_thread_id = threadId;
+      if (caption) sendOpts.caption = caption;
+
+      await this.bot.api.sendVideo(numericId, new InputFile(videoPath), sendOpts);
+      logger.info({ jid, videoPath }, 'Telegram video sent');
+    } catch (err) {
+      logger.error({ jid, videoPath, err }, 'Failed to send Telegram video');
     }
   }
 
