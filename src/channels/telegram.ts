@@ -289,9 +289,31 @@ export class TelegramChannel implements Channel {
       }
     });
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
+    this.bot.on('message:document', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const doc = ctx.message.document;
+      const name = doc?.file_name || 'file';
+
+      try {
+        const file = await ctx.api.getFile(doc!.file_id);
+        const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+        const fileBuffer = await downloadFile(url);
+
+        const docsDir = path.join('groups', group.folder, 'documents');
+        fs.mkdirSync(docsDir, { recursive: true });
+        const filename = `${Date.now()}_${name}`;
+        fs.writeFileSync(path.join(docsDir, filename), fileBuffer);
+
+        const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+        storeNonText(ctx, `[Document: /workspace/group/documents/${filename}]${caption}`);
+        logger.info({ chatJid, filename, size: fileBuffer.length }, 'Saved Telegram document');
+      } catch (err) {
+        logger.error({ err }, 'Failed to download Telegram document');
+        storeNonText(ctx, `[Document: ${name}]`);
+      }
     });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
