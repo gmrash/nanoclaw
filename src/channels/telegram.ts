@@ -1,7 +1,7 @@
 import fs from 'fs';
 import https from 'https';
 import path from 'path';
-import { Api, Bot } from 'grammy';
+import { Api, Bot, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
@@ -308,8 +308,14 @@ export class TelegramChannel implements Channel {
         fs.writeFileSync(path.join(docsDir, filename), fileBuffer);
 
         const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
-        storeNonText(ctx, `[Document: /workspace/group/documents/${filename}]${caption}`);
-        logger.info({ chatJid, filename, size: fileBuffer.length }, 'Saved Telegram document');
+        storeNonText(
+          ctx,
+          `[Document: /workspace/group/documents/${filename}]${caption}`,
+        );
+        logger.info(
+          { chatJid, filename, size: fileBuffer.length },
+          'Saved Telegram document',
+        );
       } catch (err) {
         logger.error({ err }, 'Failed to download Telegram document');
         storeNonText(ctx, `[Document: ${name}]`);
@@ -373,6 +379,26 @@ export class TelegramChannel implements Channel {
       logger.info({ jid, length: text.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+    }
+  }
+
+  async sendPhoto(jid: string, photoPath: string, caption?: string): Promise<void> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return;
+    }
+
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      const threadId = this.threadIds.get(jid);
+      const sendOpts: Record<string, unknown> = {};
+      if (threadId) sendOpts.message_thread_id = threadId;
+      if (caption) sendOpts.caption = caption;
+
+      await this.bot.api.sendPhoto(numericId, new InputFile(photoPath), sendOpts);
+      logger.info({ jid, photoPath }, 'Telegram photo sent');
+    } catch (err) {
+      logger.error({ jid, photoPath, err }, 'Failed to send Telegram photo');
     }
   }
 
