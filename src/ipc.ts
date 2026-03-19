@@ -10,6 +10,24 @@ import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
+/** Map container paths to host paths for file sending. */
+function resolveContainerPath(
+  containerPath: string,
+  sourceGroup: string,
+): string | null {
+  // /workspace/group/... -> groups/<folder>/...
+  if (containerPath.startsWith('/workspace/group/')) {
+    return path.join('groups', sourceGroup, containerPath.slice('/workspace/group/'.length));
+  }
+  // /workspace/group -> groups/<folder>
+  if (containerPath === '/workspace/group') {
+    return path.join('groups', sourceGroup);
+  }
+  // File is in a non-mapped location (e.g. /tmp/) — not accessible from host
+  logger.warn({ containerPath, sourceGroup }, 'Cannot resolve container path to host path');
+  return null;
+}
+
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   sendPhoto?: (
@@ -136,15 +154,28 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     'Unauthorized IPC photo attempt blocked',
                   );
                 }
-              } else if (data.type === 'document' && data.chatJid && data.filePath && deps.sendDocument) {
+              } else if (
+                data.type === 'document' &&
+                data.chatJid &&
+                data.filePath &&
+                deps.sendDocument
+              ) {
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendDocument(data.chatJid, data.filePath, data.caption);
+                  await deps.sendDocument(
+                    data.chatJid,
+                    data.filePath,
+                    data.caption,
+                  );
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup, filePath: data.filePath },
+                    {
+                      chatJid: data.chatJid,
+                      sourceGroup,
+                      filePath: data.filePath,
+                    },
                     'IPC document sent',
                   );
                 } else {
@@ -153,15 +184,28 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     'Unauthorized IPC document attempt blocked',
                   );
                 }
-              } else if (data.type === 'video' && data.chatJid && data.filePath && deps.sendVideo) {
+              } else if (
+                data.type === 'video' &&
+                data.chatJid &&
+                data.filePath &&
+                deps.sendVideo
+              ) {
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendVideo(data.chatJid, data.filePath, data.caption);
+                  await deps.sendVideo(
+                    data.chatJid,
+                    data.filePath,
+                    data.caption,
+                  );
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup, filePath: data.filePath },
+                    {
+                      chatJid: data.chatJid,
+                      sourceGroup,
+                      filePath: data.filePath,
+                    },
                     'IPC video sent',
                   );
                 } else {
