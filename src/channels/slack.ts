@@ -1,6 +1,4 @@
 import fs from 'fs';
-import https from 'https';
-import http from 'http';
 import path from 'path';
 import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
@@ -325,49 +323,27 @@ export class SlackChannel implements Channel {
     }
   }
 
-  private downloadSlackFile(
-    url: string,
-    withAuth = true,
-  ): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const mod = url.startsWith('https') ? https : http;
-      const opts = withAuth
-        ? { headers: { Authorization: `Bearer ${this.botToken}` } }
-        : {};
-      mod
-        .get(url, opts, (res) => {
-          if (
-            (res.statusCode === 301 ||
-              res.statusCode === 302 ||
-              res.statusCode === 307) &&
-            res.headers.location
-          ) {
-            // CDN redirects are pre-signed — do NOT forward the auth header
-            this.downloadSlackFile(res.headers.location, false).then(
-              resolve,
-              reject,
-            );
-            return;
-          }
-          if (res.statusCode !== 200) {
-            reject(new Error(`HTTP ${res.statusCode}`));
-            return;
-          }
-          const chunks: Buffer[] = [];
-          res.on('data', (chunk: Buffer) => chunks.push(chunk));
-          res.on('end', () => {
-            const buf = Buffer.concat(chunks);
-            // Sanity check: if we got HTML, auth failed
-            if (buf.slice(0, 15).toString().includes('<!DOCTYPE')) {
-              reject(new Error('Got HTML response — Slack auth failed'));
-              return;
-            }
-            resolve(buf);
-          });
-          res.on('error', reject);
-        })
-        .on('error', reject);
+  private async downloadSlackFile(url: string): Promise<Buffer> {
+    // Use fetch with Bearer auth; fetch automatically drops auth headers on
+    // cross-origin redirects (e.g. to Slack CDN), which is correct behavior.
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${this.botToken}` },
+      redirect: 'follow',
     });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} downloading Slack file`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buf = Buffer.from(arrayBuffer);
+
+    // Sanity check: reject HTML responses (auth failure)
+    if (buf.slice(0, 15).toString().includes('<!DOCTYPE')) {
+      throw new Error('Got HTML response — Slack auth failed');
+    }
+
+    return buf;
   }
 
   isConnected(): boolean {
