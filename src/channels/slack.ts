@@ -1,3 +1,7 @@
+import fs from 'fs';
+import https from 'https';
+import http from 'http';
+import path from 'path';
 import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 
@@ -35,6 +39,7 @@ export class SlackChannel implements Channel {
   private userNameCache = new Map<string, string>();
 
   private opts: SlackChannelOpts;
+  private botToken: string;
 
   constructor(opts: SlackChannelOpts) {
     this.opts = opts;
@@ -44,6 +49,7 @@ export class SlackChannel implements Channel {
     const env = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN']);
     const botToken = env.SLACK_BOT_TOKEN;
     const appToken = env.SLACK_APP_TOKEN;
+    this.botToken = botToken || '';
 
     if (!botToken || !appToken) {
       throw new Error(
@@ -150,6 +156,45 @@ export class SlackChannel implements Channel {
         is_from_me: isBotMessage,
         is_bot_message: isBotMessage,
       });
+
+      // Handle file attachments
+      const msgAny = msg as GenericMessageEvent & { files?: Array<{ id: string; name: string; mimetype: string; url_private_download?: string }> };
+      if (msgAny.files && msgAny.files.length > 0 && !isBotMessage && groups[jid]) {
+        for (const file of msgAny.files) {
+          if (file.url_private_download) {
+            try {
+              const fileBuffer = await this.downloadSlackFile(file.url_private_download);
+              const docsDir = path.join('groups', groups[jid].folder, 'documents');
+              fs.mkdirSync(docsDir, { recursive: true });
+              const filename = `${Date.now()}_${file.name || 'file'}`;
+              fs.writeFileSync(path.join(docsDir, filename), fileBuffer);
+              this.opts.onMessage(jid, {
+                id: `${msg.ts}-file-${file.id}`,
+                chat_jid: jid,
+                sender: msg.user || '',
+                sender_name: senderName,
+                content: `[Document: /workspace/group/documents/${filename}]`,
+                timestamp,
+                is_from_me: false,
+                is_bot_message: false,
+              });
+              logger.info({ jid, filename, size: fileBuffer.length }, 'Saved Slack file');
+            } catch (err) {
+              logger.error({ err, fileId: file.id }, 'Failed to download Slack file');
+              this.opts.onMessage(jid, {
+                id: `${msg.ts}-file-${file.id}`,
+                chat_jid: jid,
+                sender: msg.user || '',
+                sender_name: senderName,
+                content: `[File: ${file.name || 'unknown'}]`,
+                timestamp,
+                is_from_me: false,
+                is_bot_message: false,
+              });
+            }
+          }
+        }
+      }
     });
   }
 
@@ -208,6 +253,53 @@ export class SlackChannel implements Channel {
         'Failed to send Slack message, queued',
       );
     }
+  }
+
+  async sendPhoto(jid: string, photoPath: string, caption?: string): Promise<void> {
+    await this.uploadFile(jid, photoPath, caption);
+  }
+
+  async sendDocument(jid: string, filePath: string, caption?: string): Promise<void> {
+    await this.uploadFile(jid, filePath, caption);
+  }
+
+  async sendVideo(jid: string, videoPath: string, caption?: string): Promise<void> {
+    await this.uploadFile(jid, videoPath, caption);
+  }
+
+  private async uploadFile(jid: string, filePath: string, caption?: string): Promise<void> {
+    const channelId = jid.replace(/^slack:/, '');
+    try {
+      await this.app.client.filesUploadV2({
+        channel_id: channelId,
+        file: filePath,
+        filename: path.basename(filePath),
+        initial_comment: caption || undefined,
+      });
+      logger.info({ jid, filePath }, 'Slack file uploaded');
+    } catch (err) {
+      logger.error({ jid, filePath, err }, 'Failed to upload Slack file');
+    }
+  }
+
+  private downloadSlackFile(url: string): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const mod = url.startsWith('https') ? https : http;
+      mod.get(url, { headers: { Authorization: `Bearer ${this.botToken}` } }, (res) => {
+        if (res.statusCode === 302 && res.headers.location) {
+          this.downloadSlackFile(res.headers.location).then(resolve, reject);
+          return;
+        }
+        if (res.statusCode !== 200) {
+          reject(new Error(`HTTP ${res.statusCode}`));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      }).on('error', reject);
+    });
   }
 
   isConnected(): boolean {
