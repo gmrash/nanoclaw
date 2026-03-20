@@ -38,16 +38,18 @@ export class SlackChannel implements Channel {
 
   private opts: SlackChannelOpts;
   private botToken: string;
+  private openAIKey: string | undefined;
 
   constructor(opts: SlackChannelOpts) {
     this.opts = opts;
 
     // Read tokens from .env (not process.env — keeps secrets off the environment
     // so they don't leak to child processes, matching NanoClaw's security pattern)
-    const env = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN']);
+    const env = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'OPENAI_API_KEY']);
     const botToken = env.SLACK_BOT_TOKEN;
     const appToken = env.SLACK_APP_TOKEN;
     this.botToken = botToken || '';
+    this.openAIKey = env.OPENAI_API_KEY;
 
     if (!botToken || !appToken) {
       throw new Error(
@@ -185,7 +187,7 @@ export class SlackChannel implements Channel {
 
               if (file.mimetype?.startsWith('image/')) {
                 subdir = 'photos';
-                marker = `[Photo: /workspace/group/photos/${filename}]`;
+                marker = `Image file saved at /workspace/group/photos/${filename}`;
               } else if (file.mimetype?.startsWith('video/')) {
                 subdir = 'videos';
                 marker = `[Video: /workspace/group/videos/${filename}]`;
@@ -194,12 +196,21 @@ export class SlackChannel implements Channel {
               const targetDir = path.join('groups', groups[jid].folder, subdir);
               fs.mkdirSync(targetDir, { recursive: true });
               fs.writeFileSync(path.join(targetDir, filename), fileBuffer);
+
+              let finalContent = marker;
+              if (file.mimetype?.startsWith('image/')) {
+                const desc = await this.describeImageWithOpenAI(fileBuffer, file.mimetype);
+                if (desc) {
+                  finalContent = `${marker}\nImage description: ${desc}`;
+                }
+              }
+
               this.opts.onMessage(jid, {
                 id: `${msg.ts}-file-${file.id}`,
                 chat_jid: jid,
                 sender: msg.user || '',
                 sender_name: senderName,
-                content: marker,
+                content: finalContent,
                 timestamp,
                 is_from_me: false,
                 is_bot_message: false,
@@ -309,6 +320,63 @@ export class SlackChannel implements Channel {
     caption?: string,
   ): Promise<void> {
     await this.uploadFile(jid, videoPath, caption);
+  }
+
+  private async describeImageWithOpenAI(
+    imageBuffer: Buffer,
+    mimeType: string,
+  ): Promise<string | null> {
+    if (!this.openAIKey) return null;
+
+    try {
+      const payload = {
+        model: 'gpt-4.1-mini',
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: 'Опиши изображение по-русски в 3-6 предложениях. Если на изображении есть текст — перепиши его. Будь конкретным и фактическим.',
+              },
+              {
+                type: 'input_image',
+                image_url: `data:${mimeType};base64,${imageBuffer.toString('base64')}`,
+              },
+            ],
+          },
+        ],
+        max_output_tokens: 300,
+      };
+
+      const res = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${this.openAIKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        logger.warn({ status: res.status }, 'OpenAI image description request failed');
+        return null;
+      }
+
+      const data = (await res.json()) as {
+        output?: Array<{
+          type?: string;
+          content?: Array<{ type?: string; text?: string }>;
+        }>;
+      };
+
+      const text =
+        data.output?.find((item) => item.type === 'message')?.content?.find((c) => c.type === 'output_text')?.text || null;
+      return text;
+    } catch (err) {
+      logger.warn({ err }, 'OpenAI image description failed');
+      return null;
+    }
   }
 
   private async uploadFile(
