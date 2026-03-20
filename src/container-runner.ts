@@ -122,12 +122,12 @@ function buildVolumeMounts(
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true, mode: 0o777 });
+  fs.chmodSync(groupSessionsDir, 0o777);
   // Pre-create subdirectories Claude Code expects, with writable permissions
   for (const sub of ['session-env', 'projects', 'backups', 'plans']) {
-    fs.mkdirSync(path.join(groupSessionsDir, sub), {
-      recursive: true,
-      mode: 0o777,
-    });
+    const subDir = path.join(groupSessionsDir, sub);
+    fs.mkdirSync(subDir, { recursive: true, mode: 0o777 });
+    fs.chmodSync(subDir, 0o777);
   }
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
