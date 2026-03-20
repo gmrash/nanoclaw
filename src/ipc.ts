@@ -142,13 +142,24 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  const hostPath = resolveContainerPath(data.filePath, sourceGroup);
+                  const hostPath = resolveContainerPath(
+                    data.filePath,
+                    sourceGroup,
+                  );
                   if (!hostPath) {
-                    logger.error({ filePath: data.filePath }, 'Photo path not resolvable to host');
+                    logger.error(
+                      { filePath: data.filePath },
+                      'Photo path not resolvable to host',
+                    );
                   } else {
                     await deps.sendPhoto(data.chatJid, hostPath, data.caption);
                     logger.info(
-                      { chatJid: data.chatJid, sourceGroup, filePath: data.filePath, hostPath },
+                      {
+                        chatJid: data.chatJid,
+                        sourceGroup,
+                        filePath: data.filePath,
+                        hostPath,
+                      },
                       'IPC photo sent',
                     );
                   }
@@ -169,11 +180,21 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  const hostDocPath = resolveContainerPath(data.filePath, sourceGroup);
+                  const hostDocPath = resolveContainerPath(
+                    data.filePath,
+                    sourceGroup,
+                  );
                   if (!hostDocPath) {
-                    logger.error({ filePath: data.filePath }, 'Document path not resolvable to host');
+                    logger.error(
+                      { filePath: data.filePath },
+                      'Document path not resolvable to host',
+                    );
                   } else {
-                    await deps.sendDocument(data.chatJid, hostDocPath, data.caption);
+                    await deps.sendDocument(
+                      data.chatJid,
+                      hostDocPath,
+                      data.caption,
+                    );
                   }
                   logger.info(
                     {
@@ -200,11 +221,21 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  const hostVidPath = resolveContainerPath(data.filePath, sourceGroup);
+                  const hostVidPath = resolveContainerPath(
+                    data.filePath,
+                    sourceGroup,
+                  );
                   if (!hostVidPath) {
-                    logger.error({ filePath: data.filePath }, 'Video path not resolvable to host');
+                    logger.error(
+                      { filePath: data.filePath },
+                      'Video path not resolvable to host',
+                    );
                   } else {
-                    await deps.sendVideo(data.chatJid, hostVidPath, data.caption);
+                    await deps.sendVideo(
+                      data.chatJid,
+                      hostVidPath,
+                      data.caption,
+                    );
                   }
                   logger.info(
                     {
