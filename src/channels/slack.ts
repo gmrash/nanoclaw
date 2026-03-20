@@ -179,20 +179,27 @@ export class SlackChannel implements Channel {
               const fileBuffer = await this.downloadSlackFile(
                 file.url_private_download,
               );
-              const docsDir = path.join(
-                'groups',
-                groups[jid].folder,
-                'documents',
-              );
-              fs.mkdirSync(docsDir, { recursive: true });
               const filename = `${Date.now()}_${file.name || 'file'}`;
-              fs.writeFileSync(path.join(docsDir, filename), fileBuffer);
+              let subdir = 'documents';
+              let marker = `[Document: /workspace/group/documents/${filename}]`;
+
+              if (file.mimetype?.startsWith('image/')) {
+                subdir = 'photos';
+                marker = `[Photo: /workspace/group/photos/${filename}]`;
+              } else if (file.mimetype?.startsWith('video/')) {
+                subdir = 'videos';
+                marker = `[Video: /workspace/group/videos/${filename}]`;
+              }
+
+              const targetDir = path.join('groups', groups[jid].folder, subdir);
+              fs.mkdirSync(targetDir, { recursive: true });
+              fs.writeFileSync(path.join(targetDir, filename), fileBuffer);
               this.opts.onMessage(jid, {
                 id: `${msg.ts}-file-${file.id}`,
                 chat_jid: jid,
                 sender: msg.user || '',
                 sender_name: senderName,
-                content: `[Document: /workspace/group/documents/${filename}]`,
+                content: marker,
                 timestamp,
                 is_from_me: false,
                 is_bot_message: false,
