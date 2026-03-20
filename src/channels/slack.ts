@@ -98,12 +98,14 @@ export class SlackChannel implements Channel {
       // Bolt's event type is the full MessageEvent union (17+ subtypes).
       // We filter on subtype first, then narrow to the two types we handle.
       const subtype = (event as { subtype?: string }).subtype;
-      if (subtype && subtype !== 'bot_message' && subtype !== 'file_share') return;
+      if (subtype && subtype !== 'bot_message' && subtype !== 'file_share')
+        return;
 
       // After filtering, event is either GenericMessageEvent or BotMessageEvent
       const msg = event as HandledMessageEvent;
 
-      const msgFiles = (msg as GenericMessageEvent & { files?: unknown[] }).files;
+      const msgFiles = (msg as GenericMessageEvent & { files?: unknown[] })
+        .files;
       if (!msg.text && (!msgFiles || msgFiles.length === 0)) return;
 
       // Threaded replies are flattened into the channel conversation.
@@ -159,13 +161,31 @@ export class SlackChannel implements Channel {
       });
 
       // Handle file attachments
-      const msgAny = msg as GenericMessageEvent & { files?: Array<{ id: string; name: string; mimetype: string; url_private_download?: string }> };
-      if (msgAny.files && msgAny.files.length > 0 && !isBotMessage && groups[jid]) {
+      const msgAny = msg as GenericMessageEvent & {
+        files?: Array<{
+          id: string;
+          name: string;
+          mimetype: string;
+          url_private_download?: string;
+        }>;
+      };
+      if (
+        msgAny.files &&
+        msgAny.files.length > 0 &&
+        !isBotMessage &&
+        groups[jid]
+      ) {
         for (const file of msgAny.files) {
           if (file.url_private_download) {
             try {
-              const fileBuffer = await this.downloadSlackFile(file.url_private_download);
-              const docsDir = path.join('groups', groups[jid].folder, 'documents');
+              const fileBuffer = await this.downloadSlackFile(
+                file.url_private_download,
+              );
+              const docsDir = path.join(
+                'groups',
+                groups[jid].folder,
+                'documents',
+              );
               fs.mkdirSync(docsDir, { recursive: true });
               const filename = `${Date.now()}_${file.name || 'file'}`;
               fs.writeFileSync(path.join(docsDir, filename), fileBuffer);
@@ -179,9 +199,15 @@ export class SlackChannel implements Channel {
                 is_from_me: false,
                 is_bot_message: false,
               });
-              logger.info({ jid, filename, size: fileBuffer.length }, 'Saved Slack file');
+              logger.info(
+                { jid, filename, size: fileBuffer.length },
+                'Saved Slack file',
+              );
             } catch (err) {
-              logger.error({ err, fileId: file.id }, 'Failed to download Slack file');
+              logger.error(
+                { err, fileId: file.id },
+                'Failed to download Slack file',
+              );
               this.opts.onMessage(jid, {
                 id: `${msg.ts}-file-${file.id}`,
                 chat_jid: jid,
@@ -256,19 +282,35 @@ export class SlackChannel implements Channel {
     }
   }
 
-  async sendPhoto(jid: string, photoPath: string, caption?: string): Promise<void> {
+  async sendPhoto(
+    jid: string,
+    photoPath: string,
+    caption?: string,
+  ): Promise<void> {
     await this.uploadFile(jid, photoPath, caption);
   }
 
-  async sendDocument(jid: string, filePath: string, caption?: string): Promise<void> {
+  async sendDocument(
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
     await this.uploadFile(jid, filePath, caption);
   }
 
-  async sendVideo(jid: string, videoPath: string, caption?: string): Promise<void> {
+  async sendVideo(
+    jid: string,
+    videoPath: string,
+    caption?: string,
+  ): Promise<void> {
     await this.uploadFile(jid, videoPath, caption);
   }
 
-  private async uploadFile(jid: string, filePath: string, caption?: string): Promise<void> {
+  private async uploadFile(
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
     try {
       await this.app.client.filesUploadV2({
@@ -283,23 +325,48 @@ export class SlackChannel implements Channel {
     }
   }
 
-  private downloadSlackFile(url: string): Promise<Buffer> {
+  private downloadSlackFile(
+    url: string,
+    withAuth = true,
+  ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const mod = url.startsWith('https') ? https : http;
-      mod.get(url, { headers: { Authorization: `Bearer ${this.botToken}` } }, (res) => {
-        if (res.statusCode === 302 && res.headers.location) {
-          this.downloadSlackFile(res.headers.location).then(resolve, reject);
-          return;
-        }
-        if (res.statusCode !== 200) {
-          reject(new Error(`HTTP ${res.statusCode}`));
-          return;
-        }
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('end', () => resolve(Buffer.concat(chunks)));
-        res.on('error', reject);
-      }).on('error', reject);
+      const opts = withAuth
+        ? { headers: { Authorization: `Bearer ${this.botToken}` } }
+        : {};
+      mod
+        .get(url, opts, (res) => {
+          if (
+            (res.statusCode === 301 ||
+              res.statusCode === 302 ||
+              res.statusCode === 307) &&
+            res.headers.location
+          ) {
+            // CDN redirects are pre-signed — do NOT forward the auth header
+            this.downloadSlackFile(res.headers.location, false).then(
+              resolve,
+              reject,
+            );
+            return;
+          }
+          if (res.statusCode !== 200) {
+            reject(new Error(`HTTP ${res.statusCode}`));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            const buf = Buffer.concat(chunks);
+            // Sanity check: if we got HTML, auth failed
+            if (buf.slice(0, 15).toString().includes('<!DOCTYPE')) {
+              reject(new Error('Got HTML response — Slack auth failed'));
+              return;
+            }
+            resolve(buf);
+          });
+          res.on('error', reject);
+        })
+        .on('error', reject);
     });
   }
 
