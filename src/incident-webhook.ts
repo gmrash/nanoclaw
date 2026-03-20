@@ -159,7 +159,10 @@ function formatBytes(value: number | undefined): string {
   return `${current.toFixed(current >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
 }
 
-function formatDailyPortSummary(label: string, summary?: DailyPortSummary): string[] {
+function formatDailyPortSummary(
+  label: string,
+  summary?: DailyPortSummary,
+): string[] {
   if (!summary) {
     return [`- ${label}: нет данных за сутки`];
   }
@@ -170,7 +173,8 @@ function formatDailyPortSummary(label: string, summary?: DailyPortSummary): stri
 }
 
 function buildIncidentMessage(payload: IncidentPayload): string {
-  const targetHost = payload.host?.remote_host || payload.host?.domain || 'unknown';
+  const targetHost =
+    payload.host?.remote_host || payload.host?.domain || 'unknown';
   const targetIp = payload.host?.public_ip || 'unknown';
   const coverageSeconds = payload.daily_proxy_summary?.coverage_seconds || 0;
   const coverageMinutes = Math.floor(coverageSeconds / 60);
@@ -192,8 +196,9 @@ function buildIncidentMessage(payload: IncidentPayload): string {
     '',
     'Упавшие проверки:',
     ...(payload.failed_checks && payload.failed_checks.length > 0
-      ? payload.failed_checks.map((check) =>
-          `- ${check.check}: ${check.status}${check.detail ? ` (${check.detail})` : ''}`,
+      ? payload.failed_checks.map(
+          (check) =>
+            `- ${check.check}: ${check.status}${check.detail ? ` (${check.detail})` : ''}`,
         )
       : ['- нет']),
     '',

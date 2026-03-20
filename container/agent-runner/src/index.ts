@@ -47,11 +47,73 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
+interface ImageContentBlock {
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+    data: string;
+  };
+}
+
+interface TextContentBlock {
+  type: 'text';
+  text: string;
+}
+
+type ContentBlock = TextContentBlock | ImageContentBlock;
+
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | ContentBlock[] };
   parent_tool_use_id: null;
   session_id: string;
+}
+
+/** Build a multimodal content array if the text contains [Photo: /path] markers. */
+function buildMessageContent(text: string): string | ContentBlock[] {
+  const photoRegex = /\[Photo:\s*([^\]]+)\]/g;
+  const matches = [...text.matchAll(photoRegex)];
+  if (matches.length === 0) return text;
+
+  const blocks: ContentBlock[] = [];
+  let lastIndex = 0;
+
+  for (const match of matches) {
+    const before = text.slice(lastIndex, match.index).trim();
+    if (before) {
+      blocks.push({ type: 'text', text: before });
+    }
+
+    const filePath = match[1].trim();
+    try {
+      const buf = fs.readFileSync(filePath);
+      const ext = filePath.split('.').pop()?.toLowerCase() || 'jpg';
+      const mimeMap: Record<string, 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'> = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg',
+        png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+      };
+      const mediaType = mimeMap[ext] || 'image/jpeg';
+      blocks.push({
+        type: 'image',
+        source: { type: 'base64', media_type: mediaType, data: buf.toString('base64') },
+      });
+    } catch (err) {
+      // File not readable — fall back to text marker
+      blocks.push({ type: 'text', text: match[0] });
+    }
+
+    lastIndex = (match.index ?? 0) + match[0].length;
+  }
+
+  const after = text.slice(lastIndex).trim();
+  if (after) {
+    blocks.push({ type: 'text', text: after });
+  }
+
+  return blocks.length === 1 && blocks[0].type === 'text'
+    ? (blocks[0] as TextContentBlock).text
+    : blocks;
 }
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
@@ -70,7 +132,7 @@ class MessageStream {
   push(text: string): void {
     this.queue.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content: buildMessageContent(text) },
       parent_tool_use_id: null,
       session_id: '',
     });

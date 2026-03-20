@@ -45,7 +45,11 @@ export class SlackChannel implements Channel {
 
     // Read tokens from .env (not process.env — keeps secrets off the environment
     // so they don't leak to child processes, matching NanoClaw's security pattern)
-    const env = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'OPENAI_API_KEY']);
+    const env = readEnvFile([
+      'SLACK_BOT_TOKEN',
+      'SLACK_APP_TOKEN',
+      'OPENAI_API_KEY',
+    ]);
     const botToken = env.SLACK_BOT_TOKEN;
     const appToken = env.SLACK_APP_TOKEN;
     this.botToken = botToken || '';
@@ -199,7 +203,10 @@ export class SlackChannel implements Channel {
 
               let finalContent = marker;
               if (file.mimetype?.startsWith('image/')) {
-                const desc = await this.describeImageWithOpenAI(fileBuffer, file.mimetype);
+                const desc = await this.describeImageWithOpenAI(
+                  fileBuffer,
+                  file.mimetype,
+                );
                 if (desc) {
                   finalContent = `${marker}\nImage description: ${desc}`;
                 }
@@ -359,7 +366,10 @@ export class SlackChannel implements Channel {
       });
 
       if (!res.ok) {
-        logger.warn({ status: res.status }, 'OpenAI image description request failed');
+        logger.warn(
+          { status: res.status },
+          'OpenAI image description request failed',
+        );
         return null;
       }
 
@@ -371,7 +381,9 @@ export class SlackChannel implements Channel {
       };
 
       const text =
-        data.output?.find((item) => item.type === 'message')?.content?.find((c) => c.type === 'output_text')?.text || null;
+        data.output
+          ?.find((item) => item.type === 'message')
+          ?.content?.find((c) => c.type === 'output_text')?.text || null;
       return text;
     } catch (err) {
       logger.warn({ err }, 'OpenAI image description failed');
