@@ -63,6 +63,135 @@ server.tool(
 );
 
 server.tool(
+  'send_photo',
+  'Send a photo/image file to the current chat.',
+  {
+    filePath: z.string().describe('Path to the image file'),
+    caption: z.string().optional().describe('Optional caption'),
+  },
+  async (args) => {
+    writeIpcFile(MESSAGES_DIR, {
+      type: 'photo',
+      chatJid,
+      filePath: args.filePath,
+      caption: args.caption || '',
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+    return { content: [{ type: 'text' as const, text: 'Photo sent.' }] };
+  },
+);
+
+server.tool(
+  'send_document',
+  'Send a document/file to the current chat. Use for PDFs, spreadsheets, text files, markdown, etc.',
+  {
+    filePath: z.string().describe('Path to the file'),
+    caption: z.string().optional().describe('Optional caption'),
+  },
+  async (args) => {
+    writeIpcFile(MESSAGES_DIR, {
+      type: 'document',
+      chatJid,
+      filePath: args.filePath,
+      caption: args.caption || '',
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+    return { content: [{ type: 'text' as const, text: 'Document sent.' }] };
+  },
+);
+
+server.tool(
+  'send_video',
+  'Send a video file to the current chat.',
+  {
+    filePath: z.string().describe('Path to the video file'),
+    caption: z.string().optional().describe('Optional caption'),
+  },
+  async (args) => {
+    writeIpcFile(MESSAGES_DIR, {
+      type: 'video',
+      chatJid,
+      filePath: args.filePath,
+      caption: args.caption || '',
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+    return { content: [{ type: 'text' as const, text: 'Video sent.' }] };
+  },
+);
+
+
+server.tool(
+  'send_whatsapp',
+  'Send a WhatsApp message to any phone number or group. Main group only. For phone numbers, use international format without + (e.g., "34612345678"). The message is sent from the linked WhatsApp account.',
+  {
+    phone: z.string().describe('Phone number without + (e.g., "34612345678") or a group JID (e.g., "120363...@g.us")'),
+    text: z.string().describe('The message text to send'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can send messages to arbitrary numbers.' }],
+        isError: true,
+      };
+    }
+
+    const jid = args.phone.includes('@')
+      ? args.phone
+      : `${args.phone.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+
+    const data = {
+      type: 'message',
+      chatJid: jid,
+      text: args.text,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: `Message sent to ${jid}. Replies will be relayed back to you.` }] };
+  },
+);
+
+server.tool(
+  'send_whatsapp_photo',
+  'Send a photo via WhatsApp to any phone number. Main group only. The photo must be a file path accessible in the container.',
+  {
+    phone: z.string().describe('Phone number without + (e.g., "34612345678") or a group JID'),
+    filePath: z.string().describe('Path to the image file (e.g., /workspace/group/photos/image.jpg)'),
+    caption: z.string().optional().describe('Optional caption for the photo'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can send photos to arbitrary numbers.' }],
+        isError: true,
+      };
+    }
+
+    const jid = args.phone.includes('@')
+      ? args.phone
+      : `${args.phone.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+
+    const data = {
+      type: 'photo',
+      chatJid: jid,
+      filePath: args.filePath,
+      caption: args.caption || '',
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: `Photo sent to ${jid}.` }] };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 
@@ -336,3 +465,41 @@ Use available_groups.json to find the JID for a group. The folder name must be c
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+
+server.tool(
+  'make_call',
+  'Make a phone call using AI voice. The AI will call the number, have a conversation following your instructions, and return the transcript when done. Main group only. Twilio trial: can only call verified numbers.',
+  {
+    phone: z.string().describe('Phone number in international format (e.g., "34661193021" or "+34661193021")'),
+    instruction: z.string().describe('What the AI should say and accomplish on the call. Be specific about the goal, language, and tone. Example: "Call this restaurant and ask about availability for 4 people on Saturday evening. Speak in Spanish."'),
+    max_duration_seconds: z.number().default(120).describe('Maximum call duration in seconds (default: 120)'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can make phone calls.' }],
+        isError: true,
+      };
+    }
+
+    const callId = `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const data = {
+      type: 'phone_call',
+      callId,
+      phone: args.phone.replace(/[^0-9+]/g, ''),
+      instruction: args.instruction,
+      maxDuration: args.max_duration_seconds || 120,
+      groupFolder,
+      chatJid,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Call initiated (ID: ${callId}). The AI will call +${data.phone} and follow your instructions. You'll receive the transcript when the call completes.` }],
+    };
+  },
+);

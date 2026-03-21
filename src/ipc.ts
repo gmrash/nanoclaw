@@ -9,6 +9,8 @@ import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
+import { addRelay } from './wa-relay.js';
+import { initiateCall } from './voice-call.js';
 
 /** Map container paths to host paths for file sending. */
 function resolveContainerPath(
@@ -125,6 +127,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
                   );
+                  // Register relay for WhatsApp replies to unregistered numbers
+                  if (data.chatJid.endsWith('@s.whatsapp.net') && !registeredGroups[data.chatJid]) {
+                    const originJid = Object.entries(registeredGroups).find(([, g]) => g.folder === sourceGroup)?.[0];
+                    if (originJid) addRelay(data.chatJid, sourceGroup, originJid);
+                  }
                 } else {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
@@ -249,6 +256,39 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC video attempt blocked',
+                  );
+                }
+              } else if (
+                data.type === 'phone_call' &&
+                data.callId &&
+                data.phone &&
+                data.instruction
+              ) {
+                // Phone call - only main group
+                if (isMain) {
+                  const result = await initiateCall(
+                    data.callId,
+                    data.phone,
+                    data.instruction,
+                    data.maxDuration || 120,
+                    sourceGroup,
+                    Object.entries(registeredGroups).find(([, g]) => g.folder === sourceGroup)?.[0] || '',
+                  );
+                  if (result.ok) {
+                    logger.info(
+                      { callId: data.callId, phone: data.phone, sourceGroup },
+                      'Phone call initiated via IPC',
+                    );
+                  } else {
+                    logger.error(
+                      { callId: data.callId, phone: data.phone, error: result.error },
+                      'Failed to initiate phone call',
+                    );
+                  }
+                } else {
+                  logger.warn(
+                    { sourceGroup },
+                    'Unauthorized phone call attempt blocked',
                   );
                 }
               }

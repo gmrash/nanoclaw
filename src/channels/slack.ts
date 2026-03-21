@@ -191,7 +191,7 @@ export class SlackChannel implements Channel {
 
               if (file.mimetype?.startsWith('image/')) {
                 subdir = 'photos';
-                marker = `Image file saved at /workspace/group/photos/${filename}`;
+                marker = `[Photo: /workspace/group/photos/${filename}]`;
               } else if (file.mimetype?.startsWith('video/')) {
                 subdir = 'videos';
                 marker = `[Video: /workspace/group/videos/${filename}]`;

@@ -5,7 +5,9 @@ import path from 'path';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  WAMessage,
   WASocket,
+  downloadMediaMessage,
   fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
@@ -33,6 +35,7 @@ export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  onRelayReply?: (chatJid: string, content: string, senderName: string) => void;
 }
 
 export class WhatsAppChannel implements Channel {
@@ -202,13 +205,35 @@ export class WhatsAppChannel implements Channel {
 
           // Only deliver full message for registered groups
           const groups = this.opts.registeredGroups();
-          if (groups[chatJid]) {
-            const content =
+          const group = groups[chatJid];
+          if (group) {
+            // Download photo if present
+            let photoMarker = '';
+            if (normalized.imageMessage) {
+              try {
+                const buffer = await downloadMediaMessage(msg as WAMessage, 'buffer', {});
+                const photosDir = path.join('groups', group.folder, 'photos');
+                fs.mkdirSync(photosDir, { recursive: true });
+                const filename = `${Date.now()}.jpg`;
+                fs.writeFileSync(path.join(photosDir, filename), buffer as Buffer);
+                photoMarker = `[Photo: /workspace/group/photos/${filename}]`;
+                logger.info({ chatJid, filename }, 'Saved WA photo');
+              } catch (err) {
+                logger.error({ err, chatJid }, 'Failed to download WA photo');
+                photoMarker = '[Photo]';
+              }
+            }
+
+            const textContent =
               normalized.conversation ||
               normalized.extendedTextMessage?.text ||
               normalized.imageMessage?.caption ||
               normalized.videoMessage?.caption ||
               '';
+
+            const content = photoMarker
+              ? `${photoMarker}${textContent ? ` ${textContent}` : ''}`
+              : textContent;
 
             // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
             if (!content) continue;
@@ -217,10 +242,6 @@ export class WhatsAppChannel implements Channel {
             const senderName = msg.pushName || sender.split('@')[0];
 
             const fromMe = msg.key.fromMe || false;
-            // Detect bot messages: with own number, fromMe is reliable
-            // since only the bot sends from that number.
-            // With shared number, bot messages carry the assistant name prefix
-            // (even in DMs/self-chat) so we check for that.
             const isBotMessage = ASSISTANT_HAS_OWN_NUMBER
               ? fromMe
               : content.startsWith(`${ASSISTANT_NAME}:`);
@@ -235,6 +256,21 @@ export class WhatsAppChannel implements Channel {
               is_from_me: fromMe,
               is_bot_message: isBotMessage,
             });
+          } else if (this.opts.onRelayReply) {
+            // Not a registered group — check if it's a relay conversation
+            const replyContent =
+              normalized.conversation ||
+              normalized.extendedTextMessage?.text ||
+              normalized.imageMessage?.caption ||
+              normalized.videoMessage?.caption ||
+              '';
+            if ((replyContent || normalized.imageMessage) && !msg.key.fromMe) {
+              const senderName =
+                msg.pushName ||
+                (msg.key.participant || msg.key.remoteJid || '').split('@')[0];
+              const photoNote = normalized.imageMessage ? '[Фото] ' : '';
+              this.opts.onRelayReply(chatJid, `${photoNote}${replyContent}`, senderName);
+            }
           }
         } catch (err) {
           logger.error(
@@ -251,7 +287,10 @@ export class WhatsAppChannel implements Channel {
     // On a shared number, prefix is also needed in DMs (including self-chat)
     // to distinguish bot output from user messages.
     // Skip only when the assistant has its own dedicated phone number.
-    const prefixed = ASSISTANT_HAS_OWN_NUMBER
+    // Only prefix with assistant name in registered chats (shared number disambiguation).
+    // External/relay contacts should not see the bot name prefix.
+    const isRegistered = !!this.opts.registeredGroups()[jid];
+    const prefixed = (ASSISTANT_HAS_OWN_NUMBER || !isRegistered)
       ? text
       : `${ASSISTANT_NAME}: ${text}`;
 
@@ -274,6 +313,44 @@ export class WhatsAppChannel implements Channel {
         'Failed to send, message queued',
       );
     }
+  }
+
+  async sendPhoto(jid: string, photoPath: string, caption?: string): Promise<void> {
+    const buffer = fs.readFileSync(photoPath);
+    await this.sock.sendMessage(jid, {
+      image: buffer,
+      caption: caption || undefined,
+    });
+    logger.info({ jid, photoPath }, 'WA photo sent');
+  }
+
+  async sendDocument(jid: string, filePath: string, caption?: string): Promise<void> {
+    const buffer = fs.readFileSync(filePath);
+    const filename = path.basename(filePath);
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      pdf: 'application/pdf', doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xls: 'application/vnd.ms-excel',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      zip: 'application/zip', txt: 'text/plain', csv: 'text/csv',
+    };
+    await this.sock.sendMessage(jid, {
+      document: buffer,
+      fileName: filename,
+      mimetype: mimeMap[ext] || 'application/octet-stream',
+      caption: caption || undefined,
+    });
+    logger.info({ jid, filePath }, 'WA document sent');
+  }
+
+  async sendVideo(jid: string, videoPath: string, caption?: string): Promise<void> {
+    const buffer = fs.readFileSync(videoPath);
+    await this.sock.sendMessage(jid, {
+      video: buffer,
+      caption: caption || undefined,
+    });
+    logger.info({ jid, videoPath }, 'WA video sent');
   }
 
   isConnected(): boolean {

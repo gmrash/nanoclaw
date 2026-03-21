@@ -139,6 +139,16 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // WhatsApp relay table — tracks outbound conversations for reply forwarding
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS wa_relays (
+      target_jid TEXT PRIMARY KEY,
+      origin_group_folder TEXT NOT NULL,
+      origin_group_jid TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
 }
 
 export function initDatabase(): void {
@@ -698,4 +708,34 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+// --- WhatsApp Relay ---
+
+export interface WaRelay {
+  target_jid: string;
+  origin_group_folder: string;
+  origin_group_jid: string;
+  created_at: string;
+}
+
+export function upsertWaRelay(
+  targetJid: string,
+  originGroupFolder: string,
+  originGroupJid: string,
+): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO wa_relays (target_jid, origin_group_folder, origin_group_jid, created_at)
+     VALUES (?, ?, ?, ?)`,
+  ).run(targetJid, originGroupFolder, originGroupJid, new Date().toISOString());
+}
+
+export function getWaRelay(targetJid: string): WaRelay | undefined {
+  return db
+    .prepare(`SELECT * FROM wa_relays WHERE target_jid = ?`)
+    .get(targetJid) as WaRelay | undefined;
+}
+
+export function deleteWaRelay(targetJid: string): void {
+  db.prepare(`DELETE FROM wa_relays WHERE target_jid = ?`).run(targetJid);
 }

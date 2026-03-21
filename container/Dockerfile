@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y \
     libdrm2 \
     libxshmfence1 \
     curl \
+    libvips-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -67,6 +68,7 @@ RUN chown -R node:node /workspace && chmod 777 /home/node
 USER node
 
 # Set working directory to group workspace
+ENV NODE_PATH=/app/node_modules
 WORKDIR /workspace/group
 
 # Entry point reads JSON from stdin, outputs JSON to stdout

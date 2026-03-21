@@ -44,8 +44,11 @@ import {
   storeMessage,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import { startVoiceCallServer, TranscriptEntry } from './voice-call.js';
+import { getRelay } from './wa-relay.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   restoreRemoteControl,
@@ -611,6 +614,29 @@ async function main(): Promise<void> {
         requiresTrigger: false,
       });
     },
+    onRelayReply: (chatJid: string, replyContent: string, senderName: string) => {
+      const relay = getRelay(chatJid);
+      if (!relay) return;
+      const phone = chatJid.split('@')[0];
+      const text = `[WhatsApp от ${senderName} (${phone})]:\n${replyContent}`;
+      if (queue.sendMessage(relay.originGroupJid, text)) {
+        logger.info({ chatJid, originGroup: relay.originGroupFolder }, 'Relay reply piped to container');
+      } else {
+        // Container not running — store as message to trigger new container
+        storeMessage({
+          id: `relay-${Date.now()}`,
+          chat_jid: relay.originGroupJid,
+          sender: chatJid,
+          sender_name: senderName,
+          content: text,
+          timestamp: new Date().toISOString(),
+          is_from_me: false,
+          is_bot_message: false,
+        });
+        queue.enqueueMessageCheck(relay.originGroupJid);
+        logger.info({ chatJid, originGroup: relay.originGroupFolder }, 'Relay reply stored, container enqueued');
+      }
+    },
   };
 
   // Create and connect all registered channels.
@@ -688,6 +714,44 @@ async function main(): Promise<void> {
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
   });
+  // Start voice call server (Twilio + OpenAI Realtime API)
+  const voiceCallEnv = readEnvFile(['TWILIO_ACCOUNT_SID', 'VOICE_CALL_PORT', 'VOICE_CALL_PUBLIC_URL']);
+  if (voiceCallEnv.TWILIO_ACCOUNT_SID) {
+    const voicePort = parseInt(voiceCallEnv.VOICE_CALL_PORT || '8788', 10);
+    const voicePublicUrl = voiceCallEnv.VOICE_CALL_PUBLIC_URL || 'https://89-167-33-29.sslip.io';
+    startVoiceCallServer(voicePort, voicePublicUrl, {
+      onCallComplete: (originGroupFolder, originGroupJid, phone, transcript, duration, status) => {
+        const transcriptText = transcript.length > 0
+          ? transcript.map((t: TranscriptEntry) => `${t.role === 'ai' ? 'AI' : 'Human'}: ${t.text}`).join('\n')
+          : '(no transcript available)';
+
+        const resultMessage = `[Phone Call Result]\nCalled: ${phone}\nDuration: ${duration}s\nStatus: ${status}\n\nTranscript:\n${transcriptText}`;
+
+        // Try to pipe to running container first
+        if (queue.sendMessage(originGroupJid, resultMessage)) {
+          logger.info({ originGroupFolder, phone }, 'Call transcript piped to container');
+        } else {
+          // Container not running — store as message to trigger new container
+          storeMessage({
+            id: `call-result-${Date.now()}`,
+            chat_jid: originGroupJid,
+            sender: phone,
+            sender_name: 'Phone Call',
+            content: resultMessage,
+            timestamp: new Date().toISOString(),
+            is_from_me: false,
+            is_bot_message: false,
+          });
+          queue.enqueueMessageCheck(originGroupJid);
+          logger.info({ originGroupFolder, phone }, 'Call transcript stored, container enqueued');
+        }
+      },
+    });
+    logger.info('Voice call server enabled');
+  } else {
+    logger.info('Voice calls disabled (TWILIO_ACCOUNT_SID not set)');
+  }
+
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   startMessageLoop().catch((err) => {
