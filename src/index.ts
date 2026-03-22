@@ -755,23 +755,52 @@ async function main(): Promise<void> {
             : '(no transcript available)';
 
         const isSuccess = status === 'completed';
-        const statusRu = status === 'completed' ? 'Успешно' : status === 'busy' ? 'Занято' : status === 'no-answer' ? 'Нет ответа' : status === 'failed' ? 'Не удалось' : status === 'canceled' ? 'Отменён' : status;
+        const statusRu =
+          status === 'completed'
+            ? 'Успешно'
+            : status === 'busy'
+              ? 'Занято'
+              : status === 'no-answer'
+                ? 'Нет ответа'
+                : status === 'failed'
+                  ? 'Не удалось'
+                  : status === 'canceled'
+                    ? 'Отменён'
+                    : status;
         const statusEmoji = isSuccess ? '\u2705' : '\u274c';
         // Detect language from phone prefix
-        const langMap: Record<string, string> = { '34': 'Испанский', '7': 'Русский', '1': 'Английский', '44': 'Английский', '33': 'Французский', '49': 'Немецкий', '39': 'Итальянский' };
+        const langMap: Record<string, string> = {
+          '34': 'Испанский',
+          '7': 'Русский',
+          '1': 'Английский',
+          '44': 'Английский',
+          '33': 'Французский',
+          '49': 'Немецкий',
+          '39': 'Итальянский',
+        };
         const cleanNum = phone.replace(/[^0-9]/g, '');
-        const detectedLang = Object.entries(langMap).find(([prefix]) => cleanNum.startsWith(prefix))?.[1] || 'Неизвестный';
+        const detectedLang =
+          Object.entries(langMap).find(([prefix]) =>
+            cleanNum.startsWith(prefix),
+          )?.[1] || 'Неизвестный';
 
         const resultMessage = `\u260e\ufe0f Результаты звонка\n\ud83d\udcde Номер: ${phone}\n\ud83c\udf10 Язык: ${detectedLang}\n\u23f1 Продолжительность: ${duration}s\n${statusEmoji} Статус: ${statusRu}`;
 
         // Save transcript as .md file and send as document (only if transcript exists)
         const callChannel = findChannel(channels, originGroupJid);
         if (callChannel?.sendDocument && transcript.length > 0) {
-          const transcriptDir = path.join(GROUPS_DIR, originGroupFolder, 'transcripts');
+          const transcriptDir = path.join(
+            GROUPS_DIR,
+            originGroupFolder,
+            'transcripts',
+          );
           fs.mkdirSync(transcriptDir, { recursive: true });
           const cleanPhone = phone.replace(/[^0-9]/g, '');
           const date = new Date().toISOString().slice(0, 10);
-          const transcriptPath = path.join(transcriptDir, `call-${cleanPhone}-${date}.md`);
+          const transcriptPath = path.join(
+            transcriptDir,
+            `call-${cleanPhone}-${date}.md`,
+          );
 
           const lines = transcriptText.split('\n').map((line: string) => {
             if (line.startsWith('AI:')) return `**AI:** ${line.slice(4)}`;
@@ -781,53 +810,108 @@ async function main(): Promise<void> {
           const mdContent = `# \u260e\ufe0f Звонок\n\n- **Номер:** ${phone}\n- **Язык:** ${detectedLang}\n- **Продолжительность:** ${duration}s\n- **Статус:** ${statusRu}\n\n## Транскрипт\n\n${lines.join('\n\n')}`;
 
           fs.writeFileSync(transcriptPath, mdContent);
-          callChannel.sendDocument(originGroupJid, transcriptPath, `\u260e\ufe0f Транскрипт: ${phone}`)
+          callChannel
+            .sendDocument(
+              originGroupJid,
+              transcriptPath,
+              `\u260e\ufe0f Транскрипт: ${phone}`,
+            )
             .then(async () => {
-              logger.info({ originGroupFolder, phone }, 'Call transcript file sent');
-              if (transcriptText && transcriptText !== '(no transcript available)') {
+              logger.info(
+                { originGroupFolder, phone },
+                'Call transcript file sent',
+              );
+              if (
+                transcriptText &&
+                transcriptText !== '(no transcript available)'
+              ) {
                 try {
                   const apiKey = readEnvFile(['OPENAI_API_KEY']).OPENAI_API_KEY;
-                  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-                    body: JSON.stringify({
-                      model: 'gpt-5.4-mini',
-                      messages: [
-                        { role: 'system', content: 'If the text is already in Russian, respond with exactly "ALREADY_RUSSIAN". Otherwise translate preserving **AI:**/**Human:** format. Output only the translation as markdown.' },
-                        { role: 'user', content: transcriptText },
-                      ],
-                      temperature: 0.3,
-                    }),
-                  });
-                  const result = await resp.json() as { choices?: { message?: { content?: string } }[] };
-                  const translation = result.choices?.[0]?.message?.content?.trim();
+                  const resp = await fetch(
+                    'https://api.openai.com/v1/chat/completions',
+                    {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${apiKey}`,
+                      },
+                      body: JSON.stringify({
+                        model: 'gpt-5.4-mini',
+                        messages: [
+                          {
+                            role: 'system',
+                            content:
+                              'If the text is already in Russian, respond with exactly "ALREADY_RUSSIAN". Otherwise translate preserving **AI:**/**Human:** format. Output only the translation as markdown.',
+                          },
+                          { role: 'user', content: transcriptText },
+                        ],
+                        temperature: 0.3,
+                      }),
+                    },
+                  );
+                  const result = (await resp.json()) as {
+                    choices?: { message?: { content?: string } }[];
+                  };
+                  const translation =
+                    result.choices?.[0]?.message?.content?.trim();
                   if (translation && translation !== 'ALREADY_RUSSIAN') {
-                    const ruPath = path.join(transcriptDir, `call-${cleanPhone}-${date}-ru.md`);
-                    fs.writeFileSync(ruPath, `# \u260e\ufe0f Звонок (перевод)\n\n- **Номер:** ${phone}\n- **Язык:** ${detectedLang}\n- **Продолжительность:** ${duration}s\n- **Статус:** ${statusRu}\n\n## Перевод\n\n${translation}`);
-                    await callChannel.sendDocument!(originGroupJid, ruPath, `\ud83c\udf10 Перевод: ${phone}`);
-                    logger.info({ originGroupFolder, phone }, 'Translation file sent');
+                    const ruPath = path.join(
+                      transcriptDir,
+                      `call-${cleanPhone}-${date}-ru.md`,
+                    );
+                    fs.writeFileSync(
+                      ruPath,
+                      `# \u260e\ufe0f Звонок (перевод)\n\n- **Номер:** ${phone}\n- **Язык:** ${detectedLang}\n- **Продолжительность:** ${duration}s\n- **Статус:** ${statusRu}\n\n## Перевод\n\n${translation}`,
+                    );
+                    await callChannel.sendDocument!(
+                      originGroupJid,
+                      ruPath,
+                      `\ud83c\udf10 Перевод: ${phone}`,
+                    );
+                    logger.info(
+                      { originGroupFolder, phone },
+                      'Translation file sent',
+                    );
                   }
                 } catch (err) {
-                  logger.error({ originGroupFolder, phone, err }, 'Failed to translate');
+                  logger.error(
+                    { originGroupFolder, phone, err },
+                    'Failed to translate',
+                  );
                 }
               }
             })
-            .catch((err) => logger.error({ originGroupFolder, phone, err }, 'Failed to send transcript file'));
+            .catch((err) =>
+              logger.error(
+                { originGroupFolder, phone, err },
+                'Failed to send transcript file',
+              ),
+            );
         }
 
         // Send result summary to chat directly
         const callCh = findChannel(channels, originGroupJid);
         if (callCh) {
-          callCh.sendMessage(originGroupJid, resultMessage)
-            .catch((err: unknown) => logger.error({ phone, err }, 'Failed to send call result message'));
+          callCh
+            .sendMessage(originGroupJid, resultMessage)
+            .catch((err: unknown) =>
+              logger.error(
+                { phone, err },
+                'Failed to send call result message',
+              ),
+            );
         }
 
         // Also pipe to container so Boris knows the result (include transcript)
-        const agentMessage = transcript.length > 0
-          ? resultMessage + '\n\nТранскрипт:\n' + transcriptText
-          : resultMessage;
+        const agentMessage =
+          transcript.length > 0
+            ? resultMessage + '\n\nТранскрипт:\n' + transcriptText
+            : resultMessage;
         if (queue.sendMessage(originGroupJid, agentMessage)) {
-          logger.info({ originGroupFolder, phone }, 'Call transcript piped to container');
+          logger.info(
+            { originGroupFolder, phone },
+            'Call transcript piped to container',
+          );
         } else {
           storeMessage({
             id: `call-result-${Date.now()}`,
@@ -840,16 +924,32 @@ async function main(): Promise<void> {
             is_bot_message: false,
           });
           queue.enqueueMessageCheck(originGroupJid);
-          logger.info({ originGroupFolder, phone }, 'Call result stored, container enqueued');
+          logger.info(
+            { originGroupFolder, phone },
+            'Call result stored, container enqueued',
+          );
         }
       },
-      onRecordingReady: (originGroupFolder, originGroupJid, phone, filePath) => {
+      onRecordingReady: (
+        originGroupFolder,
+        originGroupJid,
+        phone,
+        filePath,
+      ) => {
         // Send recording as document to the chat
         const channel = findChannel(channels, originGroupJid);
         if (channel?.sendDocument) {
-          channel.sendDocument(originGroupJid, filePath, `Recording: ${phone}`)
-            .then(() => logger.info({ originGroupFolder, phone }, 'Call recording sent'))
-            .catch((err) => logger.error({ originGroupFolder, phone, err }, 'Failed to send recording'));
+          channel
+            .sendDocument(originGroupJid, filePath, `Recording: ${phone}`)
+            .then(() =>
+              logger.info({ originGroupFolder, phone }, 'Call recording sent'),
+            )
+            .catch((err) =>
+              logger.error(
+                { originGroupFolder, phone, err },
+                'Failed to send recording',
+              ),
+            );
         }
       },
     });

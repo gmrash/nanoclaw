@@ -5,7 +5,7 @@ import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { createTask, deleteTask, getTaskById, updateTask, storeMessage } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -127,10 +127,29 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
                   );
+                  // Store outbound WhatsApp messages in DB for history
+                  if (data.chatJid.endsWith('@s.whatsapp.net')) {
+                    storeMessage({
+                      id: `wa-out-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                      chat_jid: data.chatJid,
+                      sender: 'Boris',
+                      sender_name: 'Boris',
+                      content: data.text,
+                      timestamp: new Date().toISOString(),
+                      is_from_me: true,
+                      is_bot_message: true,
+                    });
+                  }
                   // Register relay for WhatsApp replies to unregistered numbers
-                  if (data.chatJid.endsWith('@s.whatsapp.net') && !registeredGroups[data.chatJid]) {
-                    const originJid = Object.entries(registeredGroups).find(([, g]) => g.folder === sourceGroup)?.[0];
-                    if (originJid) addRelay(data.chatJid, sourceGroup, originJid);
+                  if (
+                    data.chatJid.endsWith('@s.whatsapp.net') &&
+                    !registeredGroups[data.chatJid]
+                  ) {
+                    const originJid = Object.entries(registeredGroups).find(
+                      ([, g]) => g.folder === sourceGroup,
+                    )?.[0];
+                    if (originJid)
+                      addRelay(data.chatJid, sourceGroup, originJid);
                   }
                 } else {
                   logger.warn(
@@ -272,7 +291,9 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     data.instruction,
                     data.maxDuration || 120,
                     sourceGroup,
-                    Object.entries(registeredGroups).find(([, g]) => g.folder === sourceGroup)?.[0] || '',
+                    Object.entries(registeredGroups).find(
+                      ([, g]) => g.folder === sourceGroup,
+                    )?.[0] || '',
                   );
                   if (result.ok) {
                     logger.info(
@@ -284,11 +305,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       ([, g]) => g.folder === sourceGroup,
                     )?.[0];
                     if (originJid) {
-                      deps.sendMessage(originJid, `📝 Инструкция для звонка:\n\n${data.instruction}`).catch(() => {});
+                      deps
+                        .sendMessage(
+                          originJid,
+                          `📝 Инструкция для звонка:\n\n${data.instruction}`,
+                        )
+                        .catch(() => {});
                     }
                   } else {
                     logger.error(
-                      { callId: data.callId, phone: data.phone, error: result.error },
+                      {
+                        callId: data.callId,
+                        phone: data.phone,
+                        error: result.error,
+                      },
                       'Failed to initiate phone call',
                     );
                   }

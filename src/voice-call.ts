@@ -58,7 +58,10 @@ interface ActiveCall {
 }
 
 const activeCalls = new Map<string, ActiveCall>();
-const recentCalls = new Map<string, { originGroupFolder: string; originGroupJid: string; phone: string }>();
+const recentCalls = new Map<
+  string,
+  { originGroupFolder: string; originGroupJid: string; phone: string }
+>();
 
 let twilioClient: ReturnType<typeof twilio> | null = null;
 let twilioAccountSid = '';
@@ -183,7 +186,9 @@ function handleHttpRequest(
   // Twilio recording callback
   if (url.startsWith('/voice/recording/')) {
     let body = '';
-    req.on('data', (chunk) => { body += chunk; });
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
     req.on('end', async () => {
       const callId = url.split('/voice/recording/')[1]?.split('?')[0];
       const params = new URLSearchParams(body);
@@ -197,7 +202,11 @@ function handleHttpRequest(
           const mp3Url = `${recordingUrl}.mp3`;
           const response = await fetch(mp3Url, {
             headers: {
-              Authorization: 'Basic ' + Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString('base64'),
+              Authorization:
+                'Basic ' +
+                Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString(
+                  'base64',
+                ),
             },
           });
           if (response.ok) {
@@ -205,15 +214,30 @@ function handleHttpRequest(
             // Find the origin group from active or recently finished calls
             const callInfo = recentCalls.get(callId);
             if (callInfo) {
-              const recordingDir = path.join(GROUPS_DIR, callInfo.originGroupFolder, 'recordings');
+              const recordingDir = path.join(
+                GROUPS_DIR,
+                callInfo.originGroupFolder,
+                'recordings',
+              );
               fs.mkdirSync(recordingDir, { recursive: true });
-              const filePath = path.join(recordingDir, `call-${callInfo.phone.replace(/[^0-9]/g, '')}-${Date.now()}.mp3`);
+              const filePath = path.join(
+                recordingDir,
+                `call-${callInfo.phone.replace(/[^0-9]/g, '')}-${Date.now()}.mp3`,
+              );
               fs.writeFileSync(filePath, buffer);
               logger.info({ callId, filePath }, 'Recording saved');
-              deps.onRecordingReady?.(callInfo.originGroupFolder, callInfo.originGroupJid, callInfo.phone, filePath);
+              deps.onRecordingReady?.(
+                callInfo.originGroupFolder,
+                callInfo.originGroupJid,
+                callInfo.phone,
+                filePath,
+              );
             }
           } else {
-            logger.error({ callId, status: response.status }, 'Failed to download recording');
+            logger.error(
+              { callId, status: response.status },
+              'Failed to download recording',
+            );
           }
         } catch (err) {
           logger.error({ callId, err }, 'Error downloading recording');
@@ -252,7 +276,10 @@ function handleMediaStream(twilioWs: WebSocket, call: ActiveCall): void {
   call.openaiWs = openaiWs;
 
   openaiWs.on('open', () => {
-    logger.info({ callId: call.callId, instruction: call.instruction.slice(0, 200) }, 'OpenAI Realtime API connected');
+    logger.info(
+      { callId: call.callId, instruction: call.instruction.slice(0, 200) },
+      'OpenAI Realtime API connected',
+    );
 
     // Configure session
     openaiWs.send(
@@ -278,12 +305,14 @@ function handleMediaStream(twilioWs: WebSocket, call: ActiveCall): void {
     // Make AI speak first - initiate the conversation
     setTimeout(() => {
       if (openaiWs.readyState === WebSocket.OPEN) {
-        openaiWs.send(JSON.stringify({
-          type: 'response.create',
-          response: {
-            modalities: ['text', 'audio'],
-          },
-        }));
+        openaiWs.send(
+          JSON.stringify({
+            type: 'response.create',
+            response: {
+              modalities: ['text', 'audio'],
+            },
+          }),
+        );
         logger.info({ callId: call.callId }, 'AI prompted to speak first');
       }
     }, 500);
@@ -431,7 +460,11 @@ function finishCall(callId: string, status: string): void {
   );
 
   // Save for recording callback
-  recentCalls.set(callId, { originGroupFolder: call.originGroupFolder, originGroupJid: call.originGroupJid, phone: call.phone });
+  recentCalls.set(callId, {
+    originGroupFolder: call.originGroupFolder,
+    originGroupJid: call.originGroupJid,
+    phone: call.phone,
+  });
   // Auto-cleanup after 10 minutes
   setTimeout(() => recentCalls.delete(callId), 600000);
 
