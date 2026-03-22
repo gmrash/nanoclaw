@@ -279,6 +279,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       { callId: data.callId, phone: data.phone, sourceGroup },
                       'Phone call initiated via IPC',
                     );
+                    // Send instruction to chat so user can see what was passed to OpenAI
+                    const originJid = Object.entries(registeredGroups).find(
+                      ([, g]) => g.folder === sourceGroup,
+                    )?.[0];
+                    if (originJid) {
+                      deps.sendMessage(originJid, `📝 Инструкция для звонка:\n\n${data.instruction}`).catch(() => {});
+                    }
                   } else {
                     logger.error(
                       { callId: data.callId, phone: data.phone, error: result.error },

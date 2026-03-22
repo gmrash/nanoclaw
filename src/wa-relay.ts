@@ -12,7 +12,11 @@ export interface RelayEntry {
   originGroupJid: string;
 }
 
-export function addRelay(targetJid: string, originGroupFolder: string, originGroupJid: string): void {
+export function addRelay(
+  targetJid: string,
+  originGroupFolder: string,
+  originGroupJid: string,
+): void {
   upsertWaRelay(targetJid, originGroupFolder, originGroupJid);
   logger.info({ targetJid, originGroupFolder }, 'WA relay registered');
 }

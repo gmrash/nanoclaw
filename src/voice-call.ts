@@ -11,10 +11,13 @@
  * 7. On call end, transcript is injected back to the originating group
  */
 
+import fs from 'fs';
+import path from 'path';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import twilio from 'twilio';
 import { readEnvFile } from './env.js';
+import { GROUPS_DIR } from './config.js';
 import { logger } from './logger.js';
 
 export interface VoiceCallDeps {
@@ -25,6 +28,12 @@ export interface VoiceCallDeps {
     transcript: TranscriptEntry[],
     duration: number,
     status: string,
+  ) => void;
+  onRecordingReady?: (
+    originGroupFolder: string,
+    originGroupJid: string,
+    phone: string,
+    filePath: string,
   ) => void;
 }
 
@@ -45,11 +54,15 @@ interface ActiveCall {
   startTime: number;
   maxDuration: number;
   streamSid?: string;
+  recordingUrl?: string;
 }
 
 const activeCalls = new Map<string, ActiveCall>();
+const recentCalls = new Map<string, { originGroupFolder: string; originGroupJid: string; phone: string }>();
 
 let twilioClient: ReturnType<typeof twilio> | null = null;
+let twilioAccountSid = '';
+let twilioAuthToken = '';
 let twilioPhoneNumber = '';
 let openaiApiKey = '';
 let publicBaseUrl = '';
@@ -67,7 +80,9 @@ export function startVoiceCallServer(
     'OPENAI_API_KEY',
   ]);
 
-  twilioClient = twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+  twilioAccountSid = env.TWILIO_ACCOUNT_SID;
+  twilioAuthToken = env.TWILIO_AUTH_TOKEN;
+  twilioClient = twilio(twilioAccountSid, twilioAuthToken);
   twilioPhoneNumber = env.TWILIO_PHONE_NUMBER;
   openaiApiKey = env.OPENAI_API_KEY;
   publicBaseUrl = publicUrl;
@@ -106,7 +121,10 @@ export function startVoiceCallServer(
   return server;
 }
 
-function handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+function handleHttpRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): void {
   const url = req.url || '';
 
   // Twilio webhook: call connected, return TwiML with Stream
@@ -136,17 +154,69 @@ function handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse):
   // Twilio status callback
   if (url.startsWith('/voice/status/')) {
     let body = '';
-    req.on('data', (chunk) => { body += chunk; });
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
     req.on('end', () => {
       const callId = url.split('/voice/status/')[1]?.split('?')[0];
       const params = new URLSearchParams(body);
       const status = params.get('CallStatus') || 'unknown';
       logger.info({ callId, status }, 'Call status update');
 
-      if (['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(status)) {
+      if (
+        ['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(
+          status,
+        )
+      ) {
         const call = activeCalls.get(callId || '');
         if (call) {
           finishCall(callId!, status);
+        }
+      }
+
+      res.writeHead(200);
+      res.end('OK');
+    });
+    return;
+  }
+
+  // Twilio recording callback
+  if (url.startsWith('/voice/recording/')) {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      const callId = url.split('/voice/recording/')[1]?.split('?')[0];
+      const params = new URLSearchParams(body);
+      const recordingUrl = params.get('RecordingUrl');
+      const recordingSid = params.get('RecordingSid');
+
+      if (recordingUrl && callId) {
+        logger.info({ callId, recordingSid }, 'Recording ready');
+        // Download recording as MP3
+        try {
+          const mp3Url = `${recordingUrl}.mp3`;
+          const response = await fetch(mp3Url, {
+            headers: {
+              Authorization: 'Basic ' + Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString('base64'),
+            },
+          });
+          if (response.ok) {
+            const buffer = Buffer.from(await response.arrayBuffer());
+            // Find the origin group from active or recently finished calls
+            const callInfo = recentCalls.get(callId);
+            if (callInfo) {
+              const recordingDir = path.join(GROUPS_DIR, callInfo.originGroupFolder, 'recordings');
+              fs.mkdirSync(recordingDir, { recursive: true });
+              const filePath = path.join(recordingDir, `call-${callInfo.phone.replace(/[^0-9]/g, '')}-${Date.now()}.mp3`);
+              fs.writeFileSync(filePath, buffer);
+              logger.info({ callId, filePath }, 'Recording saved');
+              deps.onRecordingReady?.(callInfo.originGroupFolder, callInfo.originGroupJid, callInfo.phone, filePath);
+            }
+          } else {
+            logger.error({ callId, status: response.status }, 'Failed to download recording');
+          }
+        } catch (err) {
+          logger.error({ callId, err }, 'Error downloading recording');
         }
       }
 
@@ -182,26 +252,41 @@ function handleMediaStream(twilioWs: WebSocket, call: ActiveCall): void {
   call.openaiWs = openaiWs;
 
   openaiWs.on('open', () => {
-    logger.info({ callId: call.callId }, 'OpenAI Realtime API connected');
+    logger.info({ callId: call.callId, instruction: call.instruction.slice(0, 200) }, 'OpenAI Realtime API connected');
 
     // Configure session
-    openaiWs.send(JSON.stringify({
-      type: 'session.update',
-      session: {
-        modalities: ['text', 'audio'],
-        instructions: call.instruction,
-        voice: 'alloy',
-        input_audio_format: 'g711_ulaw',
-        output_audio_format: 'g711_ulaw',
-        input_audio_transcription: { model: 'gpt-4o-mini-transcribe' },
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500,
+    openaiWs.send(
+      JSON.stringify({
+        type: 'session.update',
+        session: {
+          modalities: ['text', 'audio'],
+          instructions: call.instruction,
+          voice: 'alloy',
+          input_audio_format: 'g711_ulaw',
+          output_audio_format: 'g711_ulaw',
+          input_audio_transcription: { model: 'gpt-4o-mini-transcribe' },
+          turn_detection: {
+            type: 'server_vad',
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 500,
+          },
         },
-      },
-    }));
+      }),
+    );
+
+    // Make AI speak first - initiate the conversation
+    setTimeout(() => {
+      if (openaiWs.readyState === WebSocket.OPEN) {
+        openaiWs.send(JSON.stringify({
+          type: 'response.create',
+          response: {
+            modalities: ['text', 'audio'],
+          },
+        }));
+        logger.info({ callId: call.callId }, 'AI prompted to speak first');
+      }
+    }, 500);
   });
 
   openaiWs.on('message', (data) => {
@@ -212,11 +297,13 @@ function handleMediaStream(twilioWs: WebSocket, call: ActiveCall): void {
         case 'response.audio.delta':
           // Send audio back to Twilio
           if (call.streamSid && twilioWs.readyState === WebSocket.OPEN) {
-            twilioWs.send(JSON.stringify({
-              event: 'media',
-              streamSid: call.streamSid,
-              media: { payload: event.delta },
-            }));
+            twilioWs.send(
+              JSON.stringify({
+                event: 'media',
+                streamSid: call.streamSid,
+                media: { payload: event.delta },
+              }),
+            );
           }
           break;
 
@@ -224,7 +311,10 @@ function handleMediaStream(twilioWs: WebSocket, call: ActiveCall): void {
           // AI finished speaking — save transcript
           if (event.transcript) {
             call.transcript.push({ role: 'ai', text: event.transcript });
-            logger.debug({ callId: call.callId, text: event.transcript.slice(0, 100) }, 'AI said');
+            logger.debug(
+              { callId: call.callId, text: event.transcript.slice(0, 100) },
+              'AI said',
+            );
           }
           break;
 
@@ -232,16 +322,25 @@ function handleMediaStream(twilioWs: WebSocket, call: ActiveCall): void {
           // Human finished speaking — save transcript
           if (event.transcript) {
             call.transcript.push({ role: 'human', text: event.transcript });
-            logger.debug({ callId: call.callId, text: event.transcript.slice(0, 100) }, 'Human said');
+            logger.debug(
+              { callId: call.callId, text: event.transcript.slice(0, 100) },
+              'Human said',
+            );
           }
           break;
 
         case 'error':
-          logger.error({ callId: call.callId, error: event.error }, 'OpenAI Realtime error');
+          logger.error(
+            { callId: call.callId, error: event.error },
+            'OpenAI Realtime error',
+          );
           break;
       }
     } catch (err) {
-      logger.error({ callId: call.callId, err }, 'Error parsing OpenAI message');
+      logger.error(
+        { callId: call.callId, err },
+        'Error parsing OpenAI message',
+      );
     }
   });
 
@@ -265,16 +364,21 @@ function handleMediaStream(twilioWs: WebSocket, call: ActiveCall): void {
 
         case 'start':
           call.streamSid = msg.start.streamSid;
-          logger.info({ callId: call.callId, streamSid: call.streamSid }, 'Twilio stream started');
+          logger.info(
+            { callId: call.callId, streamSid: call.streamSid },
+            'Twilio stream started',
+          );
           break;
 
         case 'media':
           // Forward audio from Twilio to OpenAI
           if (openaiWs.readyState === WebSocket.OPEN) {
-            openaiWs.send(JSON.stringify({
-              type: 'input_audio_buffer.append',
-              audio: msg.media.payload,
-            }));
+            openaiWs.send(
+              JSON.stringify({
+                type: 'input_audio_buffer.append',
+                audio: msg.media.payload,
+              }),
+            );
           }
           break;
 
@@ -284,7 +388,10 @@ function handleMediaStream(twilioWs: WebSocket, call: ActiveCall): void {
           break;
       }
     } catch (err) {
-      logger.error({ callId: call.callId, err }, 'Error parsing Twilio message');
+      logger.error(
+        { callId: call.callId, err },
+        'Error parsing Twilio message',
+      );
     }
   });
 
@@ -312,7 +419,21 @@ function finishCall(callId: string, status: string): void {
   if (!call) return;
 
   const duration = Math.round((Date.now() - call.startTime) / 1000);
-  logger.info({ callId, phone: call.phone, duration, status, transcriptLength: call.transcript.length }, 'Call finished');
+  logger.info(
+    {
+      callId,
+      phone: call.phone,
+      duration,
+      status,
+      transcriptLength: call.transcript.length,
+    },
+    'Call finished',
+  );
+
+  // Save for recording callback
+  recentCalls.set(callId, { originGroupFolder: call.originGroupFolder, originGroupJid: call.originGroupJid, phone: call.phone });
+  // Auto-cleanup after 10 minutes
+  setTimeout(() => recentCalls.delete(callId), 600000);
 
   // Clean up
   call.openaiWs?.close();
@@ -362,18 +483,34 @@ export async function initiateCall(
       from: twilioPhoneNumber,
       url: `${publicBaseUrl}/voice/connect/${callId}`,
       statusCallback: `${publicBaseUrl}/voice/status/${callId}`,
-      statusCallbackEvent: ['completed', 'busy', 'no-answer', 'failed', 'canceled'],
+      statusCallbackEvent: [
+        'completed',
+        'busy',
+        'no-answer',
+        'failed',
+        'canceled',
+      ],
       statusCallbackMethod: 'POST',
+      record: true,
+      recordingStatusCallback: `${publicBaseUrl}/voice/recording/${callId}`,
+      recordingStatusCallbackEvent: ['completed'],
+      recordingStatusCallbackMethod: 'POST',
     });
 
     call.twilioCallSid = twilioCall.sid;
-    logger.info({ callId, sid: twilioCall.sid, phone: formattedPhone }, 'Twilio call initiated');
+    logger.info(
+      { callId, sid: twilioCall.sid, phone: formattedPhone },
+      'Twilio call initiated',
+    );
 
     return { ok: true };
   } catch (err) {
     activeCalls.delete(callId);
     const message = err instanceof Error ? err.message : String(err);
-    logger.error({ callId, phone: formattedPhone, err }, 'Failed to initiate Twilio call');
+    logger.error(
+      { callId, phone: formattedPhone, err },
+      'Failed to initiate Twilio call',
+    );
     return { ok: false, error: message };
   }
 }

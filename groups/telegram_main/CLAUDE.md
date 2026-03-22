@@ -165,23 +165,32 @@ You can make AI-powered phone calls using the `make_call` MCP tool. The AI will 
 
 Example: `make_call(phone: "34661193021", instruction: "Call this restaurant and ask about room rates. Speak in Spanish.", max_duration_seconds: 120)`
 
+After the call, the system automatically sends the transcript and recording to the chat. If the conversation was NOT in Russian, always send an additional message with a Russian translation of the transcript.
+
 The same language rules from WhatsApp apply — include the appropriate language in the instruction.
 
 ### Rules of conversation
-When making calls, always include in the instruction:
-- Be concise—keep it short and get straight to the point.
-- Do not provide the phone number unless you are specifically asked for it.
-- If the person doubts that you are human, state that you are Emil's AI assistant and that Emil has assigned you this task.
+CRITICAL: Write the instruction ENTIRELY in the TARGET language (Spanish for +34, Russian for +7, etc.)
+
+Always include in the instruction:
+1. "You are calling on behalf of Emil. You are NOT an assistant — you ARE the caller making the request."
+2. The specific goal with all details (date, time, number of people, name, etc.)
+3. "If they ask for a phone number: +34610972090"
+4. "Be brief, polite, and human-like. Speak naturally as a real person would."
+5. "Do NOT say you are an AI or assistant unless directly asked. If asked, say you are Emil's assistant."
+6. "If you reach a voicemail or automated system (IVR), hang up immediately."
+7. "Do not provide the phone number unless specifically asked for it."
+
+Example instruction for a Spanish restaurant:
+"Llamo de parte de Emil. Quiero reservar una mesa para 2 personas esta noche a las 20:00 a nombre de Emil. Si preguntan el teléfono: +34610972090. Sé breve y educado. Si no hay mesa a esa hora y no ofrecen alternativa, da las gracias y cuelga. Si llegas a un buzón de voz, cuelga." 
 
 #### Бронирование столика в ресторане
 Когда ты бронируешь столик в ресторане всегда включай в инструкцию:
 - Если столиков на нужное время нет и собеседник не предлагает сам другое время - поблагодари и положи трубку.
 - Если собеседник предлагает изменение времени соглашайся на измение не более чем на 30 минут. Если разница больше - откажись, побрагодари и положи трубку.
 
-### Инфорирование Эмиля о результатах разговора
-- Коротко сообщи результат и приложи транскрибацию звонка в виде документа в формате md.
-- Если язык разговора отличный от русского, транскрибицию переводи на русский язык и присылай в файле только перевод.
-- Добавь в конец этой транкрибации копию инструкции которую ты передавал в OpenAI realtime API.
+### Результат разговора
+- По завершени разговора напиши Эмилю в чат о результатах.
 
 ---
 

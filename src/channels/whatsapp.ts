@@ -211,11 +211,18 @@ export class WhatsAppChannel implements Channel {
             let photoMarker = '';
             if (normalized.imageMessage) {
               try {
-                const buffer = await downloadMediaMessage(msg as WAMessage, 'buffer', {});
+                const buffer = await downloadMediaMessage(
+                  msg as WAMessage,
+                  'buffer',
+                  {},
+                );
                 const photosDir = path.join('groups', group.folder, 'photos');
                 fs.mkdirSync(photosDir, { recursive: true });
                 const filename = `${Date.now()}.jpg`;
-                fs.writeFileSync(path.join(photosDir, filename), buffer as Buffer);
+                fs.writeFileSync(
+                  path.join(photosDir, filename),
+                  buffer as Buffer,
+                );
                 photoMarker = `[Photo: /workspace/group/photos/${filename}]`;
                 logger.info({ chatJid, filename }, 'Saved WA photo');
               } catch (err) {
@@ -269,7 +276,11 @@ export class WhatsAppChannel implements Channel {
                 msg.pushName ||
                 (msg.key.participant || msg.key.remoteJid || '').split('@')[0];
               const photoNote = normalized.imageMessage ? '[Фото] ' : '';
-              this.opts.onRelayReply(chatJid, `${photoNote}${replyContent}`, senderName);
+              this.opts.onRelayReply(
+                chatJid,
+                `${photoNote}${replyContent}`,
+                senderName,
+              );
             }
           }
         } catch (err) {
@@ -290,9 +301,10 @@ export class WhatsAppChannel implements Channel {
     // Only prefix with assistant name in registered chats (shared number disambiguation).
     // External/relay contacts should not see the bot name prefix.
     const isRegistered = !!this.opts.registeredGroups()[jid];
-    const prefixed = (ASSISTANT_HAS_OWN_NUMBER || !isRegistered)
-      ? text
-      : `${ASSISTANT_NAME}: ${text}`;
+    const prefixed =
+      ASSISTANT_HAS_OWN_NUMBER || !isRegistered
+        ? text
+        : `${ASSISTANT_NAME}: ${text}`;
 
     if (!this.connected) {
       this.outgoingQueue.push({ jid, text: prefixed });
@@ -315,7 +327,11 @@ export class WhatsAppChannel implements Channel {
     }
   }
 
-  async sendPhoto(jid: string, photoPath: string, caption?: string): Promise<void> {
+  async sendPhoto(
+    jid: string,
+    photoPath: string,
+    caption?: string,
+  ): Promise<void> {
     const buffer = fs.readFileSync(photoPath);
     await this.sock.sendMessage(jid, {
       image: buffer,
@@ -324,16 +340,23 @@ export class WhatsAppChannel implements Channel {
     logger.info({ jid, photoPath }, 'WA photo sent');
   }
 
-  async sendDocument(jid: string, filePath: string, caption?: string): Promise<void> {
+  async sendDocument(
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
     const buffer = fs.readFileSync(filePath);
     const filename = path.basename(filePath);
     const ext = path.extname(filePath).slice(1).toLowerCase();
     const mimeMap: Record<string, string> = {
-      pdf: 'application/pdf', doc: 'application/msword',
+      pdf: 'application/pdf',
+      doc: 'application/msword',
       docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       xls: 'application/vnd.ms-excel',
       xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      zip: 'application/zip', txt: 'text/plain', csv: 'text/csv',
+      zip: 'application/zip',
+      txt: 'text/plain',
+      csv: 'text/csv',
     };
     await this.sock.sendMessage(jid, {
       document: buffer,
@@ -344,7 +367,11 @@ export class WhatsAppChannel implements Channel {
     logger.info({ jid, filePath }, 'WA document sent');
   }
 
-  async sendVideo(jid: string, videoPath: string, caption?: string): Promise<void> {
+  async sendVideo(
+    jid: string,
+    videoPath: string,
+    caption?: string,
+  ): Promise<void> {
     const buffer = fs.readFileSync(videoPath);
     await this.sock.sendMessage(jid, {
       video: buffer,
