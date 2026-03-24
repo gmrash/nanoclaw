@@ -2,6 +2,15 @@
 
 Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
 
+
+
+## Важные правила
+
+- **Перезапуск NanoClaw:** Всегда используй `systemctl restart nanoclaw`. НИКОГДА не убивай процесс вручную (kill) и не запускай через nohup — systemd сам управляет процессом. Ручной запуск создаёт дубли, они конфликтуют на порту 3001 и контейнеры падают.
+
+- **Регистрация групп:** НИКОГДА не регистрируй группы напрямую в SQLite. Используй функцию `registerGroup()` из `index.ts` (через IPC или попроси Boris'а через `register_group` MCP тул). Прямая вставка в БД пропускает создание папки с правами 777 и контейнер не сможет писать в неё.
+
+- **Пересборка Docker образа:** После изменений в `container/agent-runner/src/` нужно пересобрать образ: `docker build -t nanoclaw-agent:latest -f container/Dockerfile container/`
 ## Quick Context
 
 Single Node.js process with skill-based channel system. Channels (WhatsApp, Telegram, Slack, Discord, Gmail) are skills that self-register at startup. Messages route to Claude Agent SDK running in containers (Linux VMs). Each group has isolated filesystem and memory.

@@ -117,6 +117,17 @@ export class TelegramChannel implements Channel {
       let content = ctx.message.text;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
 
+      // Include quoted message context if this is a reply
+      const reply = ctx.message.reply_to_message;
+      if (reply) {
+        const replyText = (reply as any).text || (reply as any).caption || '';
+        if (replyText) {
+          const replyFrom = (reply as any).from?.first_name || 'Unknown';
+          const truncated = replyText.length > 300 ? replyText.slice(0, 300) + '...' : replyText;
+          content = `[В ответ на сообщение от ${replyFrom}: "${truncated}"]\n${content}`;
+        }
+      }
+
       // Track forum topic thread ID for replies
       if (ctx.message.message_thread_id) {
         this.threadIds.set(chatJid, ctx.message.message_thread_id);

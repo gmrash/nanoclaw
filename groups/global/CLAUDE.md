@@ -87,6 +87,20 @@ User has a ClickUp workspace. Use the `clickup` skill to manage tasks, lists, an
 
 User has a Notion workspace. Use the `notion` skill to search, read, create, and update pages and databases. Credentials are in `/workspace/shared-credentials/notion/credentials.json`. The integration only sees pages that were explicitly shared with it.
 
+
+
+## Scheduled Tasks Best Practices
+
+When creating scheduled tasks (cron), keep the task prompt SHORT — just a reference to the skill. All logic, formatting rules, and instructions should live in a skill file (`/home/node/.claude/skills/`), not in the task prompt.
+
+**Good:**
+- Task prompt: "Run the /echo-blog-post skill"
+- Skill file: `/home/node/.claude/skills/echo-blog-post.md` — contains all the details
+
+**Bad:**
+- Task prompt with 500 words describing what to do, how to format, where to save, etc.
+
+This way the skill can be edited without touching the task, and can also be called manually.
 ## Message Formatting
 
 Format messages based on the channel you're responding to. Check your group folder name:
