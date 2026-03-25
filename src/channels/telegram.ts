@@ -123,7 +123,10 @@ export class TelegramChannel implements Channel {
         const replyText = (reply as any).text || (reply as any).caption || '';
         if (replyText) {
           const replyFrom = (reply as any).from?.first_name || 'Unknown';
-          const truncated = replyText.length > 300 ? replyText.slice(0, 300) + '...' : replyText;
+          const truncated =
+            replyText.length > 300
+              ? replyText.slice(0, 300) + '...'
+              : replyText;
           content = `[В ответ на сообщение от ${replyFrom}: "${truncated}"]\n${content}`;
         }
       }
