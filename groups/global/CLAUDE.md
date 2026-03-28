@@ -116,9 +116,19 @@ Use Slack mrkdwn syntax. Run `/slack-formatting` for the full reference. Key rul
 - `>` for block quotes
 - No `##` headings — use `*Bold text*` instead
 
-### WhatsApp/Telegram channels (folder starts with `whatsapp_` or `telegram_`)
+### Telegram channels (folder starts with `telegram_`)
 
 - `*bold*` (single asterisks, NEVER **double**)
+- `_italic_` (underscores)
+- `•` bullet points
+- ` ``` ` code blocks
+- IMPORTANT: Do NOT use `*` or `_` inside words or numbers — it breaks Telegram Markdown parsing and the message will be sent as plain text without any formatting. If in doubt, keep text plain.
+
+No `##` headings. No `[links](url)`. No `**double stars**`.
+
+### WhatsApp channels (folder starts with `whatsapp_`)
+
+- `*bold*` (single asterisks)
 - `_italic_` (underscores)
 - `•` bullet points
 - ` ``` ` code blocks
