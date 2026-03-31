@@ -303,10 +303,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
-        if (streamingMessageId !== null && channel.updateStreaming) {
-          // First result: edit the placeholder in-place
-          await channel.updateStreaming(chatJid, streamingMessageId, text, true);
-          streamingMessageId = null; // placeholder consumed
+        if (channel.updateStreaming) {
+          // Start a new placeholder if we don't have one
+          // (happens when a second message is piped to an active container)
+          if (streamingMessageId === null && channel.startStreaming) {
+            streamingMessageId = await channel.startStreaming(chatJid);
+          }
+          if (streamingMessageId !== null) {
+            await channel.updateStreaming(chatJid, streamingMessageId, text, true);
+            streamingMessageId = null; // placeholder consumed
+          } else {
+            await channel.sendMessage(chatJid, text);
+          }
         } else {
           await channel.sendMessage(chatJid, text);
         }
@@ -327,7 +335,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // If agent produced no text and placeholder is still sitting there, clean it up
   if (streamingMessageId !== null && channel.updateStreaming) {
-    try { await channel.updateStreaming(chatJid, streamingMessageId, '…', true); } catch { /* ignore */ }
+    try {
+      await channel.updateStreaming(chatJid, streamingMessageId, '…', true);
+    } catch {
+      /* ignore */
+    }
   }
 
   await channel.setTyping?.(chatJid, false);

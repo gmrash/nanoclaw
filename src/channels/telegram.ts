@@ -411,19 +411,20 @@ export class TelegramChannel implements Channel {
    */
   async startStreaming(jid: string): Promise<number | null> {
     if (!this.bot) return null;
+    const numericId = parseInt(jid.replace(/^tg:/, ''), 10);
+    const threadId = this.threadIds.get(jid);
+    const draftId =
+      this.lastUpdateId.get(jid) ??
+      Math.floor(Math.random() * 2_000_000_000) + 1;
     try {
-      const numericId = parseInt(jid.replace(/^tg:/, ''), 10);
-      const threadId = this.threadIds.get(jid);
-      // draft_id must match the update_id of the incoming message that triggered this response
-      const draftId = this.lastUpdateId.get(jid) ?? Math.floor(Math.random() * 2_000_000_000) + 1;
       const opts: Record<string, unknown> = {};
       if (threadId) opts.message_thread_id = threadId;
       await this.bot.api.sendMessageDraft(numericId, draftId, '▌', opts);
-      logger.debug({ jid, draftId }, 'Streaming draft started');
+      logger.info({ jid, draftId }, 'Streaming draft started');
       return draftId;
     } catch (err) {
-      logger.debug(
-        { jid, err },
+      logger.warn(
+        { jid, draftId, err },
         'sendMessageDraft failed, streaming unavailable',
       );
       return null;
