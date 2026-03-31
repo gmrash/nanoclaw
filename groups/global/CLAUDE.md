@@ -46,7 +46,13 @@ Files you create are saved in `/workspace/group/`. Use this for notes, research,
 
 Everything else (e.g. `/home/node/.config/`, `/tmp/`, `/home/node/node_modules/`) is destroyed when the container restarts. NEVER save credentials, config, or important data outside the persistent directories above. Always use `/workspace/group/` for credentials and data files.
 
-## Skill Updates
+## Skills
+
+`/home/node/.claude/skills/` is your skills directory. It is **unique per group** — each group has its own independent set of skills. A skill you create here is visible only in this group, not in other groups.
+
+To create a new skill: make a directory under `/home/node/.claude/skills/<skill-name>/` with a `SKILL.md` file inside. The SKILL.md must have frontmatter with `name` and `description`.
+
+### Skill Updates
 
 When the user tells you to do something a specific way (e.g. "always do X like this", "when doing Y, use Z approach"), update the relevant skill file in `/home/node/.claude/skills/` to reflect that rule. If no matching skill exists, create a new one. This ensures the instruction persists across sessions. After updating or creating a skill, always tell the user which skill was changed and what was added.
 
