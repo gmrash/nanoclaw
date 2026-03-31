@@ -43,7 +43,6 @@ import {
   setRegisteredGroup,
   setRouterState,
   setSession,
-  deleteSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
@@ -87,13 +86,13 @@ function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
   if (group.isMain) return;
   const identifier = group.folder.toLowerCase().replace(/_/g, '-');
   onecli.ensureAgent({ name: group.name, identifier }).then(
-    (res) => {
+    (res: { created: boolean }) => {
       logger.info(
         { jid, identifier, created: res.created },
         'OneCLI agent ensured',
       );
     },
-    (err) => {
+    (err: unknown) => {
       logger.debug(
         { jid, identifier, err: String(err) },
         'OneCLI agent ensure skipped',
@@ -415,7 +414,9 @@ async function runAgent(
       const isStaleSession =
         sessionId &&
         output.error &&
-        /no conversation found|ENOENT.*\.jsonl|session.*not found/i.test(output.error);
+        /no conversation found|ENOENT.*\.jsonl|session.*not found/i.test(
+          output.error,
+        );
 
       if (isStaleSession) {
         logger.warn(
@@ -425,7 +426,6 @@ async function runAgent(
         delete sessions[group.folder];
         deleteSession(group.folder);
       }
-
 
       logger.error(
         { group: group.name, error: output.error },
