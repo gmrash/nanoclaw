@@ -402,65 +402,80 @@ export class TelegramChannel implements Channel {
   }
 
   /**
-   * Streaming support: send a cursor placeholder immediately.
-   * Returns the message_id to update later, or null on failure.
+   * Streaming support: start a native Telegram streaming session via sendMessageDraft.
+   * Returns a draft_id (which we also use as the "messageId" in the Channel interface).
    */
   async startStreaming(jid: string): Promise<number | null> {
     if (!this.bot) return null;
     try {
-      const numericId = jid.replace(/^tg:/, '');
+      const numericId = parseInt(jid.replace(/^tg:/, ''), 10);
       const threadId = this.threadIds.get(jid);
-      const sendOpts = threadId ? { message_thread_id: threadId } : {};
-      const msg = await this.bot.api.sendMessage(numericId, '▌', sendOpts);
-      logger.debug({ jid, messageId: msg.message_id }, 'Streaming placeholder sent');
-      return msg.message_id;
+      // draft_id must be a positive int32 unique per streaming session
+      const draftId = Math.floor(Math.random() * 2_000_000_000) + 1;
+      const opts: Record<string, unknown> = {};
+      if (threadId) opts.message_thread_id = threadId;
+      await this.bot.api.sendMessageDraft(numericId, draftId, '▌', opts);
+      logger.debug({ jid, draftId }, 'Streaming draft started');
+      return draftId;
     } catch (err) {
-      logger.debug({ jid, err }, 'Failed to send streaming placeholder');
+      logger.debug({ jid, err }, 'sendMessageDraft failed, streaming unavailable');
       return null;
     }
   }
 
   /**
-   * Streaming support: edit the placeholder message with new text.
-   * Rate-limited to 1 edit per second.
-   * done=true: final update, removes cursor indicator.
+   * Streaming support: update the draft with growing text using sendMessageDraft.
+   * No rate limit — Telegram handles native streaming animation.
+   * done=true: reveal text progressively then finalize.
    */
-  async updateStreaming(jid: string, messageId: number, text: string, done: boolean): Promise<void> {
+  async updateStreaming(jid: string, draftId: number, text: string, done: boolean): Promise<void> {
     if (!this.bot) return;
+    const numericId = parseInt(jid.replace(/^tg:/, ''), 10);
 
-    // Rate limit: skip intermediate edits if < 1s since last edit
-    const now = Date.now();
-    const lastEdit = this.lastEditTime.get(messageId) ?? 0;
-    if (!done && now - lastEdit < 1000) return;
+    if (!done) {
+      // Intermediate update during agent processing
+      try {
+        await this.bot.api.sendMessageDraft(numericId, draftId, text + ' ▌');
+      } catch { /* ignore */ }
+      return;
+    }
 
-    const numericId = jid.replace(/^tg:/, '');
-    const display = done ? text : text + ' ▌';
+    // Final: progressively reveal text using sendMessageDraft (no rate limit)
+    const WORDS_PER_CHUNK = 5;
+    const INTERVAL_MS = 80; // ~12 words/sec — feels like real streaming
 
-    // Telegram 4096 char limit
-    const MAX_LENGTH = 4090;
-    const truncated = display.length > MAX_LENGTH
-      ? display.slice(0, MAX_LENGTH) + '…'
-      : display;
+    const tokens = text.split(/(\s+)/);
+    const wordCount = tokens.filter(t => t.trim().length > 0).length;
 
-    try {
-      await this.bot.api.editMessageText(numericId, messageId, truncated, {
-        parse_mode: 'Markdown',
-      });
-      this.lastEditTime.set(messageId, Date.now());
-    } catch (err: unknown) {
-      // If markdown fails, retry plain text
-      const msg = String(err);
-      if (msg.includes('parse')) {
-        try {
-          await this.bot.api.editMessageText(numericId, messageId, truncated);
-          this.lastEditTime.set(messageId, Date.now());
-        } catch {
-          // Ignore edit errors (message may have been deleted, etc.)
+    if (wordCount > WORDS_PER_CHUNK) {
+      // Build checkpoints: end-index in tokens array after each N words
+      const checkpoints: number[] = [];
+      let seen = 0;
+      for (let i = 0; i < tokens.length; i++) {
+        if (tokens[i].trim().length > 0) {
+          seen++;
+          if (seen % WORDS_PER_CHUNK === 0) checkpoints.push(i + 1);
         }
       }
-      // message is not modified is harmless — ignore it
+      // Animate through all checkpoints except the last (full text shown at end)
+      for (const cp of checkpoints.slice(0, -1)) {
+        const partial = tokens.slice(0, cp).join('') + ' ▌';
+        try {
+          await this.bot.api.sendMessageDraft(numericId, draftId, partial);
+        } catch { /* ignore */ }
+        await new Promise<void>(r => setTimeout(r, INTERVAL_MS));
+      }
     }
-    if (done) this.lastEditTime.delete(messageId);
+
+    // Final draft: full text, no cursor
+    try {
+      await this.bot.api.sendMessageDraft(numericId, draftId, text);
+    } catch (err) {
+      // If draft finalization fails, fall back to regular sendMessage
+      logger.debug({ jid, err }, 'Draft finalization failed, sending as new message');
+      await this.sendMessage(jid, text);
+    }
+    this.lastEditTime.delete(draftId);
   }
 
   async sendPhoto(
