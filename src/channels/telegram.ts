@@ -31,16 +31,18 @@ async function sendTelegramMessage(
   chatId: string | number,
   text: string,
   options: { message_thread_id?: number } = {},
-): Promise<void> {
+): Promise<number | null> {
   try {
-    await api.sendMessage(chatId, text, {
+    const msg = await api.sendMessage(chatId, text, {
       ...options,
       parse_mode: 'Markdown',
     });
+    return msg.message_id;
   } catch (err) {
     // Fallback: send as plain text if Markdown parsing fails
     logger.debug({ err }, 'Markdown send failed, falling back to plain text');
-    await api.sendMessage(chatId, text, options);
+    const msg = await api.sendMessage(chatId, text, options);
+    return msg.message_id;
   }
 }
 
@@ -365,6 +367,9 @@ export class TelegramChannel implements Channel {
     });
   }
 
+  // Track last edit time per message to respect rate limit (1 edit/sec)
+  private lastEditTime: Map<number, number> = new Map();
+
   async sendMessage(jid: string, text: string): Promise<void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
@@ -394,6 +399,68 @@ export class TelegramChannel implements Channel {
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
     }
+  }
+
+  /**
+   * Streaming support: send a cursor placeholder immediately.
+   * Returns the message_id to update later, or null on failure.
+   */
+  async startStreaming(jid: string): Promise<number | null> {
+    if (!this.bot) return null;
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      const threadId = this.threadIds.get(jid);
+      const sendOpts = threadId ? { message_thread_id: threadId } : {};
+      const msg = await this.bot.api.sendMessage(numericId, '▌', sendOpts);
+      logger.debug({ jid, messageId: msg.message_id }, 'Streaming placeholder sent');
+      return msg.message_id;
+    } catch (err) {
+      logger.debug({ jid, err }, 'Failed to send streaming placeholder');
+      return null;
+    }
+  }
+
+  /**
+   * Streaming support: edit the placeholder message with new text.
+   * Rate-limited to 1 edit per second.
+   * done=true: final update, removes cursor indicator.
+   */
+  async updateStreaming(jid: string, messageId: number, text: string, done: boolean): Promise<void> {
+    if (!this.bot) return;
+
+    // Rate limit: skip intermediate edits if < 1s since last edit
+    const now = Date.now();
+    const lastEdit = this.lastEditTime.get(messageId) ?? 0;
+    if (!done && now - lastEdit < 1000) return;
+
+    const numericId = jid.replace(/^tg:/, '');
+    const display = done ? text : text + ' ▌';
+
+    // Telegram 4096 char limit
+    const MAX_LENGTH = 4090;
+    const truncated = display.length > MAX_LENGTH
+      ? display.slice(0, MAX_LENGTH) + '…'
+      : display;
+
+    try {
+      await this.bot.api.editMessageText(numericId, messageId, truncated, {
+        parse_mode: 'Markdown',
+      });
+      this.lastEditTime.set(messageId, Date.now());
+    } catch (err: unknown) {
+      // If markdown fails, retry plain text
+      const msg = String(err);
+      if (msg.includes('parse')) {
+        try {
+          await this.bot.api.editMessageText(numericId, messageId, truncated);
+          this.lastEditTime.set(messageId, Date.now());
+        } catch {
+          // Ignore edit errors (message may have been deleted, etc.)
+        }
+      }
+      // message is not modified is harmless — ignore it
+    }
+    if (done) this.lastEditTime.delete(messageId);
   }
 
   async sendPhoto(

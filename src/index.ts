@@ -286,6 +286,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // Streaming: send placeholder immediately, then edit in-place when done
+  let streamingMessageId: number | null = null;
+  if (channel.startStreaming) {
+    streamingMessageId = await channel.startStreaming(chatJid);
+  }
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
@@ -297,7 +303,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
+        if (streamingMessageId !== null && channel.updateStreaming) {
+          // First result: edit the placeholder in-place
+          await channel.updateStreaming(chatJid, streamingMessageId, text, true);
+          streamingMessageId = null; // placeholder consumed
+        } else {
+          await channel.sendMessage(chatJid, text);
+        }
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -312,6 +324,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       hadError = true;
     }
   });
+
+  // If agent produced no text and placeholder is still sitting there, clean it up
+  if (streamingMessageId !== null && channel.updateStreaming) {
+    try { await channel.updateStreaming(chatJid, streamingMessageId, '…', true); } catch { /* ignore */ }
+  }
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
