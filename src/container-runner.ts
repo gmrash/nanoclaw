@@ -157,12 +157,16 @@ function buildVolumeMounts(
   // Only copy files that don't exist yet — agent edits are preserved.
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
+  // Ensure skills/ dir itself is writable so the agent can create new skills
+  fs.mkdirSync(skillsDst, { recursive: true, mode: 0o777 });
+  fs.chmodSync(skillsDst, 0o777);
   if (fs.existsSync(skillsSrc)) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
       const dstDir = path.join(skillsDst, skillDir);
       fs.mkdirSync(dstDir, { recursive: true, mode: 0o777 });
+      fs.chmodSync(dstDir, 0o777);
       for (const file of fs.readdirSync(srcDir)) {
         const dstFile = path.join(dstDir, file);
         if (!fs.existsSync(dstFile)) {
