@@ -72,6 +72,8 @@ export class TelegramChannel implements Channel {
   private botToken: string;
   // Track the last message_thread_id per chat for topic/forum replies
   private threadIds: Map<string, number> = new Map();
+  // update_id of the last incoming message per JID — used as draft_id for sendMessageDraft
+  private lastUpdateId: Map<string, number> = new Map();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
@@ -116,6 +118,7 @@ export class TelegramChannel implements Channel {
       }
 
       const chatJid = `tg:${ctx.chat.id}`;
+      this.lastUpdateId.set(chatJid, ctx.update.update_id);
       let content = ctx.message.text;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
 
@@ -212,6 +215,7 @@ export class TelegramChannel implements Channel {
     // Handle non-text messages with placeholders so the agent knows something was sent
     const storeNonText = (ctx: any, placeholder: string) => {
       const chatJid = `tg:${ctx.chat.id}`;
+      this.lastUpdateId.set(chatJid, ctx.update.update_id);
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
 
@@ -410,15 +414,18 @@ export class TelegramChannel implements Channel {
     try {
       const numericId = parseInt(jid.replace(/^tg:/, ''), 10);
       const threadId = this.threadIds.get(jid);
-      // draft_id must be a positive int32 unique per streaming session
-      const draftId = Math.floor(Math.random() * 2_000_000_000) + 1;
+      // draft_id must match the update_id of the incoming message that triggered this response
+      const draftId = this.lastUpdateId.get(jid) ?? Math.floor(Math.random() * 2_000_000_000) + 1;
       const opts: Record<string, unknown> = {};
       if (threadId) opts.message_thread_id = threadId;
       await this.bot.api.sendMessageDraft(numericId, draftId, '▌', opts);
       logger.debug({ jid, draftId }, 'Streaming draft started');
       return draftId;
     } catch (err) {
-      logger.debug({ jid, err }, 'sendMessageDraft failed, streaming unavailable');
+      logger.debug(
+        { jid, err },
+        'sendMessageDraft failed, streaming unavailable',
+      );
       return null;
     }
   }
@@ -428,7 +435,12 @@ export class TelegramChannel implements Channel {
    * No rate limit — Telegram handles native streaming animation.
    * done=true: reveal text progressively then finalize.
    */
-  async updateStreaming(jid: string, draftId: number, text: string, done: boolean): Promise<void> {
+  async updateStreaming(
+    jid: string,
+    draftId: number,
+    text: string,
+    done: boolean,
+  ): Promise<void> {
     if (!this.bot) return;
     const numericId = parseInt(jid.replace(/^tg:/, ''), 10);
 
@@ -436,7 +448,9 @@ export class TelegramChannel implements Channel {
       // Intermediate update during agent processing
       try {
         await this.bot.api.sendMessageDraft(numericId, draftId, text + ' ▌');
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       return;
     }
 
@@ -445,7 +459,7 @@ export class TelegramChannel implements Channel {
     const INTERVAL_MS = 80; // ~12 words/sec — feels like real streaming
 
     const tokens = text.split(/(\s+)/);
-    const wordCount = tokens.filter(t => t.trim().length > 0).length;
+    const wordCount = tokens.filter((t) => t.trim().length > 0).length;
 
     if (wordCount > WORDS_PER_CHUNK) {
       // Build checkpoints: end-index in tokens array after each N words
@@ -462,8 +476,10 @@ export class TelegramChannel implements Channel {
         const partial = tokens.slice(0, cp).join('') + ' ▌';
         try {
           await this.bot.api.sendMessageDraft(numericId, draftId, partial);
-        } catch { /* ignore */ }
-        await new Promise<void>(r => setTimeout(r, INTERVAL_MS));
+        } catch {
+          /* ignore */
+        }
+        await new Promise<void>((r) => setTimeout(r, INTERVAL_MS));
       }
     }
 
@@ -472,7 +488,10 @@ export class TelegramChannel implements Channel {
       await this.bot.api.sendMessageDraft(numericId, draftId, text);
     } catch (err) {
       // If draft finalization fails, fall back to regular sendMessage
-      logger.debug({ jid, err }, 'Draft finalization failed, sending as new message');
+      logger.debug(
+        { jid, err },
+        'Draft finalization failed, sending as new message',
+      );
       await this.sendMessage(jid, text);
     }
     this.lastEditTime.delete(draftId);
