@@ -301,7 +301,7 @@ async function buildContainerArgs(
   }
 
   // Pass through extra env vars for container tools (e.g. nirvana CLI)
-  const passthroughEnvVars = ['NIRVANA_USER', 'NIRVANA_PASS', 'OPENAI_API_KEY'];
+  const passthroughEnvVars = ['NIRVANA_USER', 'NIRVANA_PASS', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
   for (const key of passthroughEnvVars) {
     const val = process.env[key];
     if (val) args.push('-e', `${key}=${val}`);
