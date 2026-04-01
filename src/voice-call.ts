@@ -19,6 +19,7 @@ import twilio from 'twilio';
 import { readEnvFile } from './env.js';
 import { GROUPS_DIR } from './config.js';
 import { logger } from './logger.js';
+import { tryServePublishedPage } from './public-pages.js';
 
 export interface VoiceCallDeps {
   onCallComplete: (
@@ -85,7 +86,10 @@ export function startVoiceCallServer(
 
   twilioAccountSid = env.TWILIO_ACCOUNT_SID;
   twilioAuthToken = env.TWILIO_AUTH_TOKEN;
-  twilioClient = twilio(twilioAccountSid, twilioAuthToken);
+  twilioClient =
+    twilioAccountSid && twilioAuthToken
+      ? twilio(twilioAccountSid, twilioAuthToken)
+      : null;
   twilioPhoneNumber = env.TWILIO_PHONE_NUMBER;
   openaiApiKey = env.OPENAI_API_KEY;
   publicBaseUrl = publicUrl;
@@ -129,6 +133,10 @@ function handleHttpRequest(
   res: http.ServerResponse,
 ): void {
   const url = req.url || '';
+
+  if (tryServePublishedPage(req, res)) {
+    return;
+  }
 
   // Twilio webhook: call connected, return TwiML with Stream
   if (url.startsWith('/voice/connect/')) {

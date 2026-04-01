@@ -14,6 +14,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_URL,
+  PUBLIC_BASE_URL,
   TIMEZONE,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
@@ -56,6 +57,27 @@ interface VolumeMount {
   hostPath: string;
   containerPath: string;
   readonly: boolean;
+}
+
+const SENSITIVE_ENV_VARS = new Set([
+  'NIRVANA_USER',
+  'NIRVANA_PASS',
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'GEMINI_API_KEY',
+]);
+
+function redactContainerArgs(args: string[]): string[] {
+  return args.map((arg) => {
+    const separatorIndex = arg.indexOf('=');
+    if (separatorIndex === -1) return arg;
+
+    const key = arg.slice(0, separatorIndex);
+    if (!SENSITIVE_ENV_VARS.has(key)) return arg;
+
+    return `${key}=***`;
+  });
 }
 
 function buildVolumeMounts(
@@ -245,13 +267,17 @@ function buildVolumeMounts(
     'agent-runner-src',
   );
   if (fs.existsSync(agentRunnerSrc)) {
-    const srcIndex = path.join(agentRunnerSrc, 'index.ts');
-    const cachedIndex = path.join(groupAgentRunnerDir, 'index.ts');
+    const sourceFiles = ['index.ts', 'ipc-mcp-stdio.ts'];
     const needsCopy =
       !fs.existsSync(groupAgentRunnerDir) ||
-      !fs.existsSync(cachedIndex) ||
-      (fs.existsSync(srcIndex) &&
-        fs.statSync(srcIndex).mtimeMs > fs.statSync(cachedIndex).mtimeMs);
+      sourceFiles.some((filename) => {
+        const sourcePath = path.join(agentRunnerSrc, filename);
+        const cachedPath = path.join(groupAgentRunnerDir, filename);
+        return (
+          !fs.existsSync(cachedPath) ||
+          fs.statSync(sourcePath).mtimeMs > fs.statSync(cachedPath).mtimeMs
+        );
+      });
     if (needsCopy) {
       fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
     }
@@ -301,10 +327,20 @@ async function buildContainerArgs(
   }
 
   // Pass through extra env vars for container tools (e.g. nirvana CLI)
-  const passthroughEnvVars = ['NIRVANA_USER', 'NIRVANA_PASS', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+  const passthroughEnvVars = [
+    'NIRVANA_USER',
+    'NIRVANA_PASS',
+    'OPENAI_API_KEY',
+    'ANTHROPIC_API_KEY',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'GEMINI_API_KEY',
+  ];
   for (const key of passthroughEnvVars) {
     const val = process.env[key];
     if (val) args.push('-e', `${key}=${val}`);
+  }
+  if (PUBLIC_BASE_URL) {
+    args.push('-e', `PUBLIC_BASE_URL=${PUBLIC_BASE_URL}`);
   }
 
   // Runtime-specific args for host gateway resolution
@@ -365,7 +401,7 @@ export async function runContainerAgent(
         (m) =>
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
-      containerArgs: containerArgs.join(' '),
+      containerArgs: redactContainerArgs(containerArgs).join(' '),
     },
     'Container mount configuration',
   );
@@ -595,7 +631,7 @@ export async function runContainerAgent(
         }
         logLines.push(
           `=== Container Args ===`,
-          containerArgs.join(' '),
+          redactContainerArgs(containerArgs).join(' '),
           ``,
           `=== Mounts ===`,
           mounts

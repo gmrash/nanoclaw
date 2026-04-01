@@ -23,6 +23,12 @@ const MAX_MESSAGE_LENGTH = 4000;
 // we filter to regular messages (GenericMessageEvent, subtype undefined) and bot messages
 // (BotMessageEvent, subtype 'bot_message') so we can track our own output.
 type HandledMessageEvent = GenericMessageEvent | BotMessageEvent;
+type SlackInboundFile = {
+  id: string;
+  name: string;
+  mimetype: string;
+  url_private_download?: string;
+};
 
 export type SlackChannelOpts = ChannelOpts;
 
@@ -38,22 +44,16 @@ export class SlackChannel implements Channel {
 
   private opts: SlackChannelOpts;
   private botToken: string;
-  private openAIKey: string | undefined;
 
   constructor(opts: SlackChannelOpts) {
     this.opts = opts;
 
     // Read tokens from .env (not process.env — keeps secrets off the environment
     // so they don't leak to child processes, matching NanoClaw's security pattern)
-    const env = readEnvFile([
-      'SLACK_BOT_TOKEN',
-      'SLACK_APP_TOKEN',
-      'OPENAI_API_KEY',
-    ]);
+    const env = readEnvFile(['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN']);
     const botToken = env.SLACK_BOT_TOKEN;
     const appToken = env.SLACK_APP_TOKEN;
     this.botToken = botToken || '';
-    this.openAIKey = env.OPENAI_API_KEY;
 
     if (!botToken || !appToken) {
       throw new Error(
@@ -153,99 +153,84 @@ export class SlackChannel implements Channel {
         }
       }
 
+      const msgAny = msg as GenericMessageEvent & {
+        files?: SlackInboundFile[];
+      };
+      const attachmentContents =
+        !isBotMessage && msgAny.files && msgAny.files.length > 0
+          ? await this.buildAttachmentContents(
+              jid,
+              groups[jid].folder,
+              msgAny.files,
+            )
+          : [];
+
+      const finalContent = [content, ...attachmentContents]
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join('\n\n');
+
+      if (!finalContent) return;
+
       this.opts.onMessage(jid, {
         id: msg.ts,
         chat_jid: jid,
         sender: msg.user || msg.bot_id || '',
         sender_name: senderName,
-        content,
+        content: finalContent,
         timestamp,
         is_from_me: isBotMessage,
         is_bot_message: isBotMessage,
       });
-
-      // Handle file attachments
-      const msgAny = msg as GenericMessageEvent & {
-        files?: Array<{
-          id: string;
-          name: string;
-          mimetype: string;
-          url_private_download?: string;
-        }>;
-      };
-      if (
-        msgAny.files &&
-        msgAny.files.length > 0 &&
-        !isBotMessage &&
-        groups[jid]
-      ) {
-        for (const file of msgAny.files) {
-          if (file.url_private_download) {
-            try {
-              const fileBuffer = await this.downloadSlackFile(
-                file.url_private_download,
-              );
-              const filename = `${Date.now()}_${file.name || 'file'}`;
-              let subdir = 'documents';
-              let marker = `[Document: /workspace/group/documents/${filename}]`;
-
-              if (file.mimetype?.startsWith('image/')) {
-                subdir = 'photos';
-                marker = `[Photo: /workspace/group/photos/${filename}]`;
-              } else if (file.mimetype?.startsWith('video/')) {
-                subdir = 'videos';
-                marker = `[Video: /workspace/group/videos/${filename}]`;
-              }
-
-              const targetDir = path.join('groups', groups[jid].folder, subdir);
-              fs.mkdirSync(targetDir, { recursive: true });
-              fs.writeFileSync(path.join(targetDir, filename), fileBuffer);
-
-              let finalContent = marker;
-              if (file.mimetype?.startsWith('image/')) {
-                const desc = await this.describeImageWithOpenAI(
-                  fileBuffer,
-                  file.mimetype,
-                );
-                if (desc) {
-                  finalContent = `${marker}\nImage description: ${desc}`;
-                }
-              }
-
-              this.opts.onMessage(jid, {
-                id: `${msg.ts}-file-${file.id}`,
-                chat_jid: jid,
-                sender: msg.user || '',
-                sender_name: senderName,
-                content: finalContent,
-                timestamp,
-                is_from_me: false,
-                is_bot_message: false,
-              });
-              logger.info(
-                { jid, filename, size: fileBuffer.length },
-                'Saved Slack file',
-              );
-            } catch (err) {
-              logger.error(
-                { err, fileId: file.id },
-                'Failed to download Slack file',
-              );
-              this.opts.onMessage(jid, {
-                id: `${msg.ts}-file-${file.id}`,
-                chat_jid: jid,
-                sender: msg.user || '',
-                sender_name: senderName,
-                content: `[File: ${file.name || 'unknown'}]`,
-                timestamp,
-                is_from_me: false,
-                is_bot_message: false,
-              });
-            }
-          }
-        }
-      }
     });
+  }
+
+  private async buildAttachmentContents(
+    jid: string,
+    groupFolder: string,
+    files: SlackInboundFile[],
+  ): Promise<string[]> {
+    const parts: string[] = [];
+
+    for (const file of files) {
+      const fallback = `[File: ${file.name || 'unknown'}]`;
+      if (!file.url_private_download) {
+        parts.push(fallback);
+        continue;
+      }
+
+      try {
+        const fileBuffer = await this.downloadSlackFile(
+          file.url_private_download,
+        );
+        const filename = `${Date.now()}_${file.name || 'file'}`;
+        let subdir = 'documents';
+        let marker = `[Document: /workspace/group/documents/${filename}]`;
+
+        if (file.mimetype?.startsWith('image/')) {
+          subdir = 'photos';
+          marker = `[Photo: /workspace/group/photos/${filename}]`;
+        } else if (file.mimetype?.startsWith('video/')) {
+          subdir = 'videos';
+          marker = `[Video: /workspace/group/videos/${filename}]`;
+        }
+
+        const targetDir = path.join('groups', groupFolder, subdir);
+        fs.mkdirSync(targetDir, { recursive: true });
+        fs.writeFileSync(path.join(targetDir, filename), fileBuffer);
+
+        parts.push(marker);
+        logger.info(
+          { jid, filename, size: fileBuffer.length },
+          'Saved Slack file',
+        );
+      } catch (err) {
+        logger.error({ err, fileId: file.id }, 'Failed to download Slack file');
+        parts.push(fallback);
+      }
+    }
+
+    return parts;
   }
 
   async connect(): Promise<void> {
@@ -329,68 +314,6 @@ export class SlackChannel implements Channel {
     await this.uploadFile(jid, videoPath, caption);
   }
 
-  private async describeImageWithOpenAI(
-    imageBuffer: Buffer,
-    mimeType: string,
-  ): Promise<string | null> {
-    if (!this.openAIKey) return null;
-
-    try {
-      const payload = {
-        model: 'gpt-4.1-mini',
-        input: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: 'Опиши изображение по-русски в 3-6 предложениях. Если на изображении есть текст — перепиши его. Будь конкретным и фактическим.',
-              },
-              {
-                type: 'input_image',
-                image_url: `data:${mimeType};base64,${imageBuffer.toString('base64')}`,
-              },
-            ],
-          },
-        ],
-        max_output_tokens: 300,
-      };
-
-      const res = await fetch('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${this.openAIKey}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        logger.warn(
-          { status: res.status },
-          'OpenAI image description request failed',
-        );
-        return null;
-      }
-
-      const data = (await res.json()) as {
-        output?: Array<{
-          type?: string;
-          content?: Array<{ type?: string; text?: string }>;
-        }>;
-      };
-
-      const text =
-        data.output
-          ?.find((item) => item.type === 'message')
-          ?.content?.find((c) => c.type === 'output_text')?.text || null;
-      return text;
-    } catch (err) {
-      logger.warn({ err }, 'OpenAI image description failed');
-      return null;
-    }
-  }
-
   private async uploadFile(
     jid: string,
     filePath: string,
@@ -411,26 +334,54 @@ export class SlackChannel implements Channel {
   }
 
   private async downloadSlackFile(url: string): Promise<Buffer> {
-    // Use fetch with Bearer auth; fetch automatically drops auth headers on
-    // cross-origin redirects (e.g. to Slack CDN), which is correct behavior.
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${this.botToken}` },
-      redirect: 'follow',
-    });
+    let currentUrl = url;
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} downloading Slack file`);
+    for (let redirectCount = 0; redirectCount < 5; redirectCount++) {
+      const parsedUrl = new URL(currentUrl);
+      const headers = this.shouldAttachSlackAuth(parsedUrl)
+        ? { Authorization: `Bearer ${this.botToken}` }
+        : undefined;
+
+      const response = await fetch(currentUrl, {
+        headers,
+        redirect: 'manual',
+      });
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) {
+          throw new Error('Slack file redirect missing location header');
+        }
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} downloading Slack file`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const buf = Buffer.from(arrayBuffer);
+
+      // Sanity check: reject HTML responses (auth failure)
+      if (buf.slice(0, 15).toString().includes('<!DOCTYPE')) {
+        throw new Error('Got HTML response — Slack auth failed');
+      }
+
+      return buf;
     }
 
-    const arrayBuffer = await response.arrayBuffer();
-    const buf = Buffer.from(arrayBuffer);
+    throw new Error('Too many redirects downloading Slack file');
+  }
 
-    // Sanity check: reject HTML responses (auth failure)
-    if (buf.slice(0, 15).toString().includes('<!DOCTYPE')) {
-      throw new Error('Got HTML response — Slack auth failed');
-    }
-
-    return buf;
+  private shouldAttachSlackAuth(url: URL): boolean {
+    const host = url.hostname.toLowerCase();
+    return (
+      host === 'slack.com' ||
+      host.endsWith('.slack.com') ||
+      host === 'slack-edge.com' ||
+      host.endsWith('.slack-edge.com')
+    );
   }
 
   isConnected(): boolean {

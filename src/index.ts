@@ -12,6 +12,7 @@ import {
   MAX_MESSAGES_PER_PROMPT,
   ONECLI_URL,
   POLL_INTERVAL,
+  PUBLIC_BASE_URL,
   TIMEZONE,
 } from './config.js';
 import './channels/index.js';
@@ -310,7 +311,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             streamingMessageId = await channel.startStreaming(chatJid);
           }
           if (streamingMessageId !== null) {
-            await channel.updateStreaming(chatJid, streamingMessageId, text, true);
+            await channel.updateStreaming(
+              chatJid,
+              streamingMessageId,
+              text,
+              true,
+            );
             streamingMessageId = null; // placeholder consumed
           } else {
             await channel.sendMessage(chatJid, text);
@@ -861,10 +867,12 @@ async function main(): Promise<void> {
     'VOICE_CALL_PORT',
     'VOICE_CALL_PUBLIC_URL',
   ]);
-  if (voiceCallEnv.TWILIO_ACCOUNT_SID) {
+  if (voiceCallEnv.TWILIO_ACCOUNT_SID || PUBLIC_BASE_URL) {
     const voicePort = parseInt(voiceCallEnv.VOICE_CALL_PORT || '8788', 10);
     const voicePublicUrl =
-      voiceCallEnv.VOICE_CALL_PUBLIC_URL || 'https://89-167-33-29.sslip.io';
+      PUBLIC_BASE_URL ||
+      voiceCallEnv.VOICE_CALL_PUBLIC_URL ||
+      'https://89-167-33-29.sslip.io';
     startVoiceCallServer(voicePort, voicePublicUrl, {
       onCallComplete: (
         originGroupFolder,

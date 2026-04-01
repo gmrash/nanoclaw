@@ -14,11 +14,18 @@ import { CronExpressionParser } from 'cron-parser';
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const GENERATED_DIR = '/workspace/group/generated';
+const PUBLISHED_DIR = '/workspace/group/published';
+const GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
+const GEMINI_IMAGE_API_URL =
+  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent`;
+const GEMINI_MAX_RETRIES = 3;
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+const publicBaseUrl = process.env.NANOCLAW_PUBLIC_BASE_URL?.trim() || '';
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -32,6 +39,195 @@ function writeIpcFile(dir: string, data: object): string {
   fs.renameSync(tempPath, filepath);
 
   return filename;
+}
+
+function sanitizePublishedSlug(slug: string): string {
+  const normalized = slug
+    .trim()
+    .toLowerCase()
+    .replace(/\.html?$/i, '')
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[._-]+|[._-]+$/g, '');
+
+  return normalized || 'page';
+}
+
+function ensureHtmlDocument(html: string, title?: string): string {
+  if (/<html[\s>]/i.test(html)) {
+    return html;
+  }
+
+  const safeTitle = (title || 'NanoClaw Page')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${safeTitle}</title>
+  </head>
+  <body>
+${html}
+  </body>
+</html>
+`;
+}
+
+function buildPublishedPageUrl(filename: string): string {
+  if (!publicBaseUrl) {
+    throw new Error('PUBLIC_BASE_URL is not configured on the host');
+  }
+
+  return `${publicBaseUrl.replace(/\/+$/g, '')}/published/${encodeURIComponent(groupFolder)}/${encodeURIComponent(filename)}`;
+}
+
+interface GeminiInlineData {
+  mimeType?: string;
+  data?: string;
+}
+
+interface GeminiPart {
+  text?: string;
+  inlineData?: GeminiInlineData;
+}
+
+interface GeminiCandidate {
+  content?: {
+    parts?: GeminiPart[];
+  };
+}
+
+interface GeminiGenerateContentResponse {
+  candidates?: GeminiCandidate[];
+  error?: {
+    message?: string;
+  };
+}
+
+function getMimeTypeFromPath(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  switch (ext) {
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    case '.png':
+      return 'image/png';
+    case '.gif':
+      return 'image/gif';
+    case '.webp':
+      return 'image/webp';
+    default:
+      throw new Error(
+        `Unsupported image type for Gemini reference image: ${filePath}`,
+      );
+  }
+}
+
+function getExtensionFromMimeType(mimeType?: string): string {
+  switch (mimeType) {
+    case 'image/jpeg':
+      return 'jpg';
+    case 'image/png':
+      return 'png';
+    case 'image/gif':
+      return 'gif';
+    case 'image/webp':
+      return 'webp';
+    default:
+      return 'png';
+  }
+}
+
+function buildGeminiImagePart(filePath: string): { inlineData: GeminiInlineData } {
+  const imageBytes = fs.readFileSync(filePath);
+  return {
+    inlineData: {
+      mimeType: getMimeTypeFromPath(filePath),
+      data: imageBytes.toString('base64'),
+    },
+  };
+}
+
+async function generateImageWithGemini(
+  prompt: string,
+  referenceImagePaths: string[],
+): Promise<{ texts: string[]; images: GeminiInlineData[] }> {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not set in the container environment');
+  }
+
+  const parts: Array<{ text: string } | { inlineData: GeminiInlineData }> = [
+    { text: prompt },
+    ...referenceImagePaths.map((filePath) => buildGeminiImagePart(filePath)),
+  ];
+
+  let payload: GeminiGenerateContentResponse | undefined;
+  let lastErrorMessage = 'Unknown Gemini image generation error';
+
+  for (let attempt = 1; attempt <= GEMINI_MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(GEMINI_IMAGE_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          contents: [{ parts }],
+        }),
+      });
+
+      payload = (await response.json()) as GeminiGenerateContentResponse;
+      if (response.ok) {
+        break;
+      }
+
+      lastErrorMessage =
+        payload.error?.message ||
+        `Gemini API returned HTTP ${response.status}`;
+      const isRetriable = response.status === 429 || response.status >= 500;
+      if (!isRetriable || attempt === GEMINI_MAX_RETRIES) {
+        throw new Error(lastErrorMessage);
+      }
+    } catch (error) {
+      lastErrorMessage =
+        error instanceof Error ? error.message : lastErrorMessage;
+      if (attempt === GEMINI_MAX_RETRIES) {
+        throw new Error(lastErrorMessage);
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+  }
+
+  if (!payload) {
+    throw new Error(lastErrorMessage);
+  }
+
+  const texts: string[] = [];
+  const images: GeminiInlineData[] = [];
+  for (const candidate of payload.candidates || []) {
+    for (const part of candidate.content?.parts || []) {
+      if (part.text) {
+        texts.push(part.text);
+      }
+      if (part.inlineData?.data) {
+        images.push(part.inlineData);
+      }
+    }
+  }
+
+  if (images.length === 0) {
+    const extra = texts.length > 0 ? ` Gemini text: ${texts.join(' ').trim()}` : '';
+    throw new Error(`Gemini returned no image output.${extra}`);
+  }
+
+  return { texts, images };
 }
 
 const server = new McpServer({
@@ -79,6 +275,156 @@ server.tool(
       timestamp: new Date().toISOString(),
     });
     return { content: [{ type: 'text' as const, text: 'Photo sent.' }] };
+  },
+);
+
+server.tool(
+  'generate_image',
+  'Generate or edit an image with Gemini 3.1 Flash Image Preview. Use this for illustrations, concept art, banners, avatars, photos, or when the user explicitly wants a PNG/JPG image file. Do NOT use this for dashboards, charts, graphs, diagrams, or data visualizations with exact numbers — those should be built as HTML and published with publish_html instead. By default the generated image is also sent to the current chat, so this works across Slack, Telegram, and WhatsApp without channel-specific logic.',
+  {
+    prompt: z.string().describe('The image generation prompt'),
+    referenceImagePaths: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Optional image paths to use as references or edit inputs (for image-to-image generation)',
+      ),
+    sendToChat: z
+      .boolean()
+      .optional()
+      .describe(
+        'Whether to immediately send the generated image back to the current chat. Defaults to true.',
+      ),
+    caption: z
+      .string()
+      .optional()
+      .describe('Optional caption for the sent image'),
+  },
+  async (args) => {
+    try {
+      const { texts, images } = await generateImageWithGemini(
+        args.prompt,
+        args.referenceImagePaths || [],
+      );
+
+      fs.mkdirSync(GENERATED_DIR, { recursive: true });
+
+      const savedPaths = images.map((image, index) => {
+        const ext = getExtensionFromMimeType(image.mimeType);
+        const filename =
+          `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const filePath = path.join(GENERATED_DIR, filename);
+        fs.writeFileSync(filePath, Buffer.from(image.data!, 'base64'));
+        return filePath;
+      });
+
+      if (args.sendToChat !== false) {
+        savedPaths.forEach((filePath, index) => {
+          writeIpcFile(MESSAGES_DIR, {
+            type: 'photo',
+            chatJid,
+            filePath,
+            caption: index === 0 ? args.caption || '' : '',
+            groupFolder,
+            timestamp: new Date().toISOString(),
+          });
+        });
+      }
+
+      const summaryLines = [
+        `Generated ${savedPaths.length} image(s) with ${GEMINI_IMAGE_MODEL}.`,
+        `Saved to: ${savedPaths.join(', ')}`,
+      ];
+      if (texts.length > 0) {
+        summaryLines.push(`Gemini text: ${texts.join('\n').trim()}`);
+      }
+      if (args.sendToChat === false) {
+        summaryLines.push('The image was saved only and not sent to chat.');
+      } else {
+        summaryLines.push('The generated image was queued for sending to chat.');
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: summaryLines.join('\n') }],
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown Gemini image generation error';
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Failed to generate image: ${message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'publish_html',
+  'Publish a public single-file HTML page for the current group and send the public link back to chat. Use this by default for dashboards, charts, graphs, diagrams, reports, and data visualizations unless the user explicitly requests a static image. The HTML must be self-contained with inline CSS/JS only. Reuse the same slug to overwrite the existing page at the same URL.',
+  {
+    slug: z
+      .string()
+      .describe('Stable short slug for the page URL, for example "sales-dashboard"'),
+    html: z
+      .string()
+      .describe('Full single-file HTML, or an HTML fragment that can be wrapped into a document'),
+    title: z.string().optional().describe('Optional page title'),
+    message: z
+      .string()
+      .optional()
+      .describe('Optional custom chat message to send with the published URL'),
+  },
+  async (args) => {
+    try {
+      const filename = `${sanitizePublishedSlug(args.slug)}.html`;
+      const filePath = path.join(PUBLISHED_DIR, filename);
+      const tempPath = `${filePath}.tmp`;
+      const html = ensureHtmlDocument(args.html, args.title);
+      const publicUrl = buildPublishedPageUrl(filename);
+      const chatText = args.message
+        ? args.message.includes(publicUrl)
+          ? args.message
+          : `${args.message}\n${publicUrl}`
+        : `Published page: ${publicUrl}`;
+
+      fs.mkdirSync(PUBLISHED_DIR, { recursive: true });
+      fs.writeFileSync(tempPath, html, 'utf-8');
+      fs.renameSync(tempPath, filePath);
+
+      writeIpcFile(MESSAGES_DIR, {
+        type: 'message',
+        chatJid,
+        text: chatText,
+        groupFolder,
+        timestamp: new Date().toISOString(),
+      });
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Published HTML page.\nURL: ${publicUrl}\nFile: ${filePath}`,
+          },
+        ],
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown HTML publishing error';
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Failed to publish HTML page: ${message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 

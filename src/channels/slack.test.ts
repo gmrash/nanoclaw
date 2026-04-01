@@ -1,3 +1,5 @@
+import fs from 'fs';
+
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 // --- Mocks ---
@@ -115,6 +117,12 @@ function createMessageEvent(overrides: {
   threadTs?: string;
   subtype?: string;
   botId?: string;
+  files?: Array<{
+    id: string;
+    name: string;
+    mimetype: string;
+    url_private_download?: string;
+  }>;
 }) {
   return {
     channel: overrides.channel ?? 'C0123456789',
@@ -125,6 +133,7 @@ function createMessageEvent(overrides: {
     thread_ts: overrides.threadTs,
     subtype: overrides.subtype,
     bot_id: overrides.botId,
+    files: overrides.files,
   };
 }
 
@@ -148,6 +157,7 @@ describe('SlackChannel', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   // --- Connection lifecycle ---
@@ -481,6 +491,122 @@ describe('SlackChannel', () => {
       await triggerMessageEvent(event);
 
       expect(opts.onMessage).toHaveBeenCalled();
+    });
+
+    it('merges image attachments into a single inbound message', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(null, {
+            status: 302,
+            headers: {
+              location: 'https://files.slack.com/files-pri/T123-F456/image.png',
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(Buffer.from([0x89, 0x50, 0x4e, 0x47]), { status: 200 }),
+        );
+      vi.stubGlobal('fetch', fetchMock);
+      vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as any);
+      vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'Что на фото?',
+          subtype: 'file_share',
+          files: [
+            {
+              id: 'F456',
+              name: 'image.png',
+              mimetype: 'image/png',
+              url_private_download: 'https://slack.com/api/files/test-download',
+            },
+          ],
+        }),
+      );
+
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0123456789',
+        expect.objectContaining({
+          id: '1704067200.000000',
+          content: expect.stringContaining('Что на фото?'),
+        }),
+      );
+      expect(vi.mocked(opts.onMessage).mock.calls[0]?.[1].content).toContain(
+        '[Photo: /workspace/group/photos/',
+      );
+      expect(vi.mocked(opts.onMessage).mock.calls[0]?.[1].content).not.toContain(
+        'Image description:',
+      );
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        1,
+        'https://slack.com/api/files/test-download',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer xoxb-test-token' },
+          redirect: 'manual',
+        }),
+      );
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        'https://files.slack.com/files-pri/T123-F456/image.png',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer xoxb-test-token' },
+          redirect: 'manual',
+        }),
+      );
+      expect(
+        fetchMock.mock.calls.some(
+          ([url]) =>
+            typeof url === 'string' && url.includes('api.openai.com/v1/responses'),
+        ),
+      ).toBe(false);
+    });
+
+    it('falls back to a file marker when attachment download fails', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValue(
+            new Response('<!DOCTYPE html><html></html>', { status: 200 }),
+          ),
+      );
+      vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as any);
+      vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+
+      const opts = createTestOpts();
+      const channel = new SlackChannel(opts);
+      await channel.connect();
+
+      await triggerMessageEvent(
+        createMessageEvent({
+          text: 'Посмотри файл',
+          subtype: 'file_share',
+          files: [
+            {
+              id: 'F789',
+              name: 'broken.png',
+              mimetype: 'image/png',
+              url_private_download:
+                'https://slack.com/api/files/broken-download',
+            },
+          ],
+        }),
+      );
+
+      expect(opts.onMessage).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(opts.onMessage).mock.calls[0]?.[1].content).toContain(
+        'Посмотри файл',
+      );
+      expect(vi.mocked(opts.onMessage).mock.calls[0]?.[1].content).toContain(
+        '[File: broken.png]',
+      );
     });
   });
 

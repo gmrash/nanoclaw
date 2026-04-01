@@ -99,7 +99,12 @@ export interface Channel {
   startStreaming?(jid: string): Promise<number | null>;
   // updateStreaming: edits the placeholder with new text.
   // done=true means final update — remove cursor indicator.
-  updateStreaming?(jid: string, messageId: number, text: string, done: boolean): Promise<void>;
+  updateStreaming?(
+    jid: string,
+    messageId: number,
+    text: string,
+    done: boolean,
+  ): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

@@ -15,6 +15,7 @@ vi.mock('./config.js', () => ({
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
   ONECLI_URL: 'http://localhost:10254',
+  PUBLIC_BASE_URL: 'https://public.example.com',
   TIMEZONE: 'America/Los_Angeles',
 }));
 
@@ -37,6 +38,7 @@ vi.mock('fs', async () => {
       ...actual,
       existsSync: vi.fn(() => false),
       mkdirSync: vi.fn(),
+      chmodSync: vi.fn(),
       writeFileSync: vi.fn(),
       readFileSync: vi.fn(() => ''),
       readdirSync: vi.fn(() => []),
@@ -106,6 +108,7 @@ vi.mock('child_process', async () => {
 });
 
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import { logger } from './logger.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -131,13 +134,17 @@ function emitOutputMarker(
 }
 
 describe('container-runner timeout behavior', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
     fakeProc = createFakeProcess();
+    const childProcess = await import('child_process');
+    vi.mocked(childProcess.spawn).mockClear();
+    vi.mocked(logger.debug).mockClear();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    delete process.env.GEMINI_API_KEY;
   });
 
   it('timeout after output resolves as success', async () => {
@@ -225,5 +232,34 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+
+  it('passes GEMINI_API_KEY into the container but redacts it from logs', async () => {
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
+
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await Promise.resolve();
+
+    const childProcess = await import('child_process');
+    const spawnCalls = vi.mocked(childProcess.spawn).mock.calls;
+    expect(spawnCalls.length).toBeGreaterThan(0);
+
+    const containerArgs = spawnCalls[0][1] as string[];
+    expect(containerArgs).toContain('-e');
+    expect(containerArgs).toContain('GEMINI_API_KEY=test-gemini-key');
+    expect(containerArgs).toContain('PUBLIC_BASE_URL=https://public.example.com');
+
+    const debugCalls = vi.mocked(logger.debug).mock.calls;
+    const debugPayload = debugCalls.find(
+      ([, message]) => message === 'Container mount configuration',
+    )?.[0] as { containerArgs?: string } | undefined;
+
+    expect(debugPayload?.containerArgs).toContain('GEMINI_API_KEY=***');
+    expect(debugPayload?.containerArgs).not.toContain('test-gemini-key');
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await resultPromise;
   });
 });
