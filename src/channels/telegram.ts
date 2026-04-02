@@ -66,14 +66,17 @@ function downloadFile(url: string): Promise<Buffer> {
 
 export class TelegramChannel implements Channel {
   name = 'telegram';
+  private static readonly MAX_DRAFT_ID = 2_000_000_000;
 
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
   // Track the last message_thread_id per chat for topic/forum replies
   private threadIds: Map<string, number> = new Map();
-  // update_id of the last incoming message per JID — used as draft_id for sendMessageDraft
-  private lastUpdateId: Map<string, number> = new Map();
+  // sendMessageDraft sessions must not reuse IDs or Telegram will animate
+  // updates into the same draft bubble instead of creating a new stream.
+  private nextDraftId =
+    Math.floor(Date.now() % TelegramChannel.MAX_DRAFT_ID) || 1;
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
@@ -118,7 +121,6 @@ export class TelegramChannel implements Channel {
       }
 
       const chatJid = `tg:${ctx.chat.id}`;
-      this.lastUpdateId.set(chatJid, ctx.update.update_id);
       let content = ctx.message.text;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
 
@@ -215,7 +217,6 @@ export class TelegramChannel implements Channel {
     // Handle non-text messages with placeholders so the agent knows something was sent
     const storeNonText = (ctx: any, placeholder: string) => {
       const chatJid = `tg:${ctx.chat.id}`;
-      this.lastUpdateId.set(chatJid, ctx.update.update_id);
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
 
@@ -371,8 +372,12 @@ export class TelegramChannel implements Channel {
     });
   }
 
-  // Track last edit time per message to respect rate limit (1 edit/sec)
-  private lastEditTime: Map<number, number> = new Map();
+  private allocateDraftId(): number {
+    const draftId = this.nextDraftId;
+    this.nextDraftId =
+      draftId >= TelegramChannel.MAX_DRAFT_ID ? 1 : draftId + 1;
+    return draftId;
+  }
 
   async sendMessage(jid: string, text: string): Promise<void> {
     if (!this.bot) {
@@ -413,9 +418,7 @@ export class TelegramChannel implements Channel {
     if (!this.bot) return null;
     const numericId = parseInt(jid.replace(/^tg:/, ''), 10);
     const threadId = this.threadIds.get(jid);
-    const draftId =
-      this.lastUpdateId.get(jid) ??
-      Math.floor(Math.random() * 2_000_000_000) + 1;
+    const draftId = this.allocateDraftId();
     try {
       const opts: Record<string, unknown> = {};
       if (threadId) opts.message_thread_id = threadId;
@@ -484,18 +487,19 @@ export class TelegramChannel implements Channel {
       }
     }
 
-    // Final draft: full text, no cursor
+    // Finish streaming with a normal message so Telegram does not keep the
+    // response tied to the draft session or a stale quoted message context.
     try {
-      await this.bot.api.sendMessageDraft(numericId, draftId, text);
+      const threadId = this.threadIds.get(jid);
+      const sendOpts = threadId ? { message_thread_id: threadId } : {};
+      await sendTelegramMessage(this.bot.api, numericId, text, sendOpts);
     } catch (err) {
-      // If draft finalization fails, fall back to regular sendMessage
       logger.debug(
         { jid, err },
-        'Draft finalization failed, sending as new message',
+        'Streaming final send failed, retrying as regular message',
       );
       await this.sendMessage(jid, text);
     }
-    this.lastEditTime.delete(draftId);
   }
 
   async sendPhoto(

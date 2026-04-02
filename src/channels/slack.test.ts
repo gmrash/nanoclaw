@@ -541,9 +541,9 @@ describe('SlackChannel', () => {
       expect(vi.mocked(opts.onMessage).mock.calls[0]?.[1].content).toContain(
         '[Photo: /workspace/group/photos/',
       );
-      expect(vi.mocked(opts.onMessage).mock.calls[0]?.[1].content).not.toContain(
-        'Image description:',
-      );
+      expect(
+        vi.mocked(opts.onMessage).mock.calls[0]?.[1].content,
+      ).not.toContain('Image description:');
       expect(fetchMock).toHaveBeenNthCalledWith(
         1,
         'https://slack.com/api/files/test-download',
@@ -563,7 +563,8 @@ describe('SlackChannel', () => {
       expect(
         fetchMock.mock.calls.some(
           ([url]) =>
-            typeof url === 'string' && url.includes('api.openai.com/v1/responses'),
+            typeof url === 'string' &&
+            url.includes('api.openai.com/v1/responses'),
         ),
       ).toBe(false);
     });

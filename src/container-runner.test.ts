@@ -247,7 +247,9 @@ describe('container-runner timeout behavior', () => {
     const containerArgs = spawnCalls[0][1] as string[];
     expect(containerArgs).toContain('-e');
     expect(containerArgs).toContain('GEMINI_API_KEY=test-gemini-key');
-    expect(containerArgs).toContain('PUBLIC_BASE_URL=https://public.example.com');
+    expect(containerArgs).toContain(
+      'PUBLIC_BASE_URL=https://public.example.com',
+    );
 
     const debugCalls = vi.mocked(logger.debug).mock.calls;
     const debugPayload = debugCalls.find(

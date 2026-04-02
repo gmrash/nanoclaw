@@ -31,7 +31,10 @@ export function resolvePublishedPagePath(
     throw new Error(`Invalid published filename "${filename}"`);
   }
 
-  const publishedDir = path.join(resolveGroupFolderPath(groupFolder), 'published');
+  const publishedDir = path.join(
+    resolveGroupFolderPath(groupFolder),
+    'published',
+  );
   const pagePath = path.resolve(publishedDir, filename);
   const rel = path.relative(publishedDir, pagePath);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {

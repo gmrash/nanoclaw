@@ -49,8 +49,17 @@ describe('public-pages', () => {
 
   it('serves a published html page', () => {
     const filename = buildPublishedFilename('demo-report');
-    const filePath = path.join(tempGroupsDir, 'demo-group', 'published', filename);
-    fs.writeFileSync(filePath, '<html><body>demo report</body></html>', 'utf-8');
+    const filePath = path.join(
+      tempGroupsDir,
+      'demo-group',
+      'published',
+      filename,
+    );
+    fs.writeFileSync(
+      filePath,
+      '<html><body>demo report</body></html>',
+      'utf-8',
+    );
 
     const { capture, res } = createResponseCapture();
     const req = {
@@ -58,9 +67,7 @@ describe('public-pages', () => {
       url: `/published/demo-group/${filename}`,
     };
 
-    expect(
-      tryServePublishedPage(req as never, res as never),
-    ).toBe(true);
+    expect(tryServePublishedPage(req as never, res as never)).toBe(true);
     expect(capture.status).toBe(200);
     expect(capture.body).toContain('demo report');
   });
@@ -72,9 +79,7 @@ describe('public-pages', () => {
       url: '/published/demo-group/missing.html',
     };
 
-    expect(
-      tryServePublishedPage(req as never, res as never),
-    ).toBe(true);
+    expect(tryServePublishedPage(req as never, res as never)).toBe(true);
     expect(capture.status).toBe(404);
   });
 });
