@@ -21,10 +21,7 @@ export interface TelegramChannelOpts {
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
-function formatTelegramJid(
-  chatId: string | number,
-  threadId?: number,
-): string {
+function formatTelegramJid(chatId: string | number, threadId?: number): string {
   const normalizedChatId = String(chatId);
   return threadId
     ? `tg:${normalizedChatId}:${threadId}`
@@ -560,11 +557,7 @@ export class TelegramChannel implements Channel {
       if (threadId) sendOpts.message_thread_id = threadId;
       if (caption) sendOpts.caption = caption;
 
-      await this.bot.api.sendPhoto(
-        chatId,
-        new InputFile(photoPath),
-        sendOpts,
-      );
+      await this.bot.api.sendPhoto(chatId, new InputFile(photoPath), sendOpts);
       logger.info({ jid, photoPath }, 'Telegram photo sent');
     } catch (err) {
       logger.error({ jid, photoPath, err }, 'Failed to send Telegram photo');
@@ -616,11 +609,7 @@ export class TelegramChannel implements Channel {
       if (threadId) sendOpts.message_thread_id = threadId;
       if (caption) sendOpts.caption = caption;
 
-      await this.bot.api.sendVideo(
-        chatId,
-        new InputFile(videoPath),
-        sendOpts,
-      );
+      await this.bot.api.sendVideo(chatId, new InputFile(videoPath), sendOpts);
       logger.info({ jid, videoPath }, 'Telegram video sent');
     } catch (err) {
       logger.error({ jid, videoPath, err }, 'Failed to send Telegram video');
