@@ -138,6 +138,27 @@ Use the MCP tool or remove the entry from the `registered_groups` table in SQLit
 
 ---
 
+## Cron — Правила времени
+
+**Крон всегда работает в UTC**, независимо от того что написано в описании инструмента.
+
+Барселона:
+- Лето (последнее вс марта — последнее вс октября): CEST = UTC+2 → отнимать 2 часа
+- Зима (последнее вс октября — последнее вс марта): CET = UTC+1 → отнимать 1 час
+
+Примеры для 09:00 по Барселоне:
+- Летом (CEST): `0 7 * * *` UTC
+- Зимой (CET): `0 8 * * *` UTC
+
+**Важно:** при переводе часов (25 октября и 29 марта) нужно вручную обновлять cron-задачи через `update_task`.
+
+Текущие расписания (актуально для CEST, лето 2026):
+- Утренняя сводка: `0 7 * * *` UTC = 09:00 CEST
+- Goals-check: `5 7 * * *` UTC = 09:05 CEST
+- Barcelona news: `0 6 * * 1-5` UTC = 08:00 CEST
+
+---
+
 ## Scheduling for Other Groups
 
 When scheduling tasks for other groups, use the `target_group_jid` parameter with the group's JID:

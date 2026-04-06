@@ -350,14 +350,21 @@ async function buildContainerArgs(
 
   // Read fresh Claude OAuth token from managed credentials (auto-refreshed by cron)
   try {
-    const credsPath = path.join(process.env.HOME || '/root', '.claude', '.credentials.json');
+    const credsPath = path.join(
+      process.env.HOME || '/root',
+      '.claude',
+      '.credentials.json',
+    );
     const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
     const oauthToken = creds?.claudeAiOauth?.accessToken;
     if (oauthToken) {
       args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
     }
   } catch (err) {
-    logger.warn({ err }, 'Could not read Claude credentials file — containers may lack auth');
+    logger.warn(
+      { err },
+      'Could not read Claude credentials file — containers may lack auth',
+    );
   }
   if (PUBLIC_BASE_URL) {
     args.push('-e', `PUBLIC_BASE_URL=${PUBLIC_BASE_URL}`);
