@@ -77,6 +77,8 @@ let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+let lastDeliveredTimestamp: Record<string, string> = {};
+const pendingCommitTimestamps = new Map<string, string[]>();
 let messageLoopRunning = false;
 
 const channels: Channel[] = [];
@@ -112,6 +114,13 @@ function loadState(): void {
     logger.warn('Corrupted last_agent_timestamp in DB, resetting');
     lastAgentTimestamp = {};
   }
+  const deliveredTs = getRouterState('last_delivered_timestamp');
+  try {
+    lastDeliveredTimestamp = deliveredTs ? JSON.parse(deliveredTs) : {};
+  } catch {
+    logger.warn('Corrupted last_delivered_timestamp in DB, resetting');
+    lastDeliveredTimestamp = {};
+  }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
   logger.info(
@@ -124,6 +133,22 @@ function loadState(): void {
  * Return the message cursor for a group, recovering from the last bot reply
  * if lastAgentTimestamp is missing (new group, corrupted state, restart).
  */
+export function _recoverCursorFromInterruptedRun(
+  existingCursor: string | undefined,
+  deliveredCursor: string | undefined,
+  lastBotTimestamp: string | null | undefined,
+): string {
+  const existing = existingCursor || '';
+  const delivered = deliveredCursor || '';
+  const botTs = lastBotTimestamp || '';
+  const stable = delivered || botTs;
+
+  if (!existing) return stable;
+  if (!stable) return '';
+  if (existing > stable) return stable;
+  return existing;
+}
+
 function getOrRecoverCursor(chatJid: string): string {
   const existing = lastAgentTimestamp[chatJid];
   if (existing) return existing;
@@ -144,6 +169,38 @@ function getOrRecoverCursor(chatJid: string): string {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+  setRouterState(
+    'last_delivered_timestamp',
+    JSON.stringify(lastDeliveredTimestamp),
+  );
+}
+
+function enqueuePendingCommit(chatJid: string, timestamp: string): void {
+  const pending = pendingCommitTimestamps.get(chatJid) || [];
+  if (pending[pending.length - 1] !== timestamp) {
+    pending.push(timestamp);
+    pendingCommitTimestamps.set(chatJid, pending);
+  }
+}
+
+function clearPendingCommits(chatJid: string): void {
+  pendingCommitTimestamps.delete(chatJid);
+}
+
+function commitNextDeliveredCursor(chatJid: string): void {
+  const pending = pendingCommitTimestamps.get(chatJid);
+  if (!pending || pending.length === 0) return;
+
+  const committed = pending.shift()!;
+  lastDeliveredTimestamp[chatJid] = committed;
+
+  if (pending.length === 0) {
+    pendingCommitTimestamps.delete(chatJid);
+  } else {
+    pendingCommitTimestamps.set(chatJid, pending);
+  }
+
+  saveState();
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -261,8 +318,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
+  const batchEndTimestamp = missedMessages[missedMessages.length - 1].timestamp;
+  lastAgentTimestamp[chatJid] = batchEndTimestamp;
+  enqueuePendingCommit(chatJid, batchEndTimestamp);
   saveState();
 
   logger.info(
@@ -332,6 +390,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     if (result.status === 'success') {
+      commitNextDeliveredCursor(chatJid);
       queue.notifyIdle(chatJid);
     }
 
@@ -363,6 +422,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return true;
     }
     // Roll back cursor so retries can re-process these messages
+    clearPendingCommits(chatJid);
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
     logger.warn(
@@ -558,8 +618,10 @@ async function startMessageLoop(): Promise<void> {
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
             );
-            lastAgentTimestamp[chatJid] =
+            const batchEndTimestamp =
               messagesToSend[messagesToSend.length - 1].timestamp;
+            lastAgentTimestamp[chatJid] = batchEndTimestamp;
+            enqueuePendingCommit(chatJid, batchEndTimestamp);
             saveState();
             // Show typing indicator while the container processes the piped message
             channel
@@ -585,10 +647,41 @@ async function startMessageLoop(): Promise<void> {
  * Handles crash between advancing lastTimestamp and processing messages.
  */
 function recoverPendingMessages(): void {
+  let stateChanged = false;
+
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
+    const previousCursor = lastAgentTimestamp[chatJid] || '';
+    const deliveredCursor = lastDeliveredTimestamp[chatJid];
+    const botTs = getLastBotMessageTimestamp(chatJid, ASSISTANT_NAME);
+    const recoveryCursor = _recoverCursorFromInterruptedRun(
+      lastAgentTimestamp[chatJid],
+      deliveredCursor,
+      botTs,
+    );
+
+    if (recoveryCursor !== previousCursor) {
+      clearPendingCommits(chatJid);
+      if (recoveryCursor) {
+        lastAgentTimestamp[chatJid] = recoveryCursor;
+      } else {
+        delete lastAgentTimestamp[chatJid];
+      }
+      stateChanged = true;
+      logger.warn(
+        {
+          chatJid,
+          previousCursor,
+          deliveredCursor: deliveredCursor || '',
+          botTs: botTs || '',
+          recoveryCursor,
+        },
+        'Recovery: rolled back message cursor after interrupted run',
+      );
+    }
+
     const pending = getMessagesSince(
       chatJid,
-      getOrRecoverCursor(chatJid),
+      recoveryCursor,
       ASSISTANT_NAME,
       MAX_MESSAGES_PER_PROMPT,
     );
@@ -600,6 +693,8 @@ function recoverPendingMessages(): void {
       queue.enqueueMessageCheck(chatJid);
     }
   }
+
+  if (stateChanged) saveState();
 }
 
 function ensureContainerSystemRunning(): void {

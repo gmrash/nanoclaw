@@ -219,6 +219,21 @@ describe('TelegramChannel topics', () => {
     });
   });
 
+  it('sends published URLs with underscores as plain text', async () => {
+    const channel = new TelegramChannel('test-token', createTestOpts());
+    await channel.connect();
+
+    const url =
+      'https://89-167-33-29.sslip.io/published/telegram_spain_tickets/spain-trip-plan.html';
+
+    await channel.sendMessage('tg:42:77', url);
+
+    expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(1);
+    expect(currentBot().api.sendMessage).toHaveBeenCalledWith('42', url, {
+      message_thread_id: 77,
+    });
+  });
+
   it('reports the topic-aware chat id in /chatid', async () => {
     const channel = new TelegramChannel('test-token', createTestOpts());
     await channel.connect();

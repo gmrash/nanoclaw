@@ -183,6 +183,25 @@ Example: When the user asks you to message someone on WhatsApp, use `send_whatsa
 - Numbers with prefix 7 (Russia/Kazakhstan) — always write in Russian
 - All other numbers — ask Emil which language to use before writing
 
+## Apple / iCloud / Find My
+
+Когда задача связана с Apple-авторизацией, iCloud или Find My, работай только через браузерный flow и не импровизируй.
+
+Правила:
+- Перед новым Apple-логином сначала попробуй `agent-browser state load /workspace/group/apple-auth.json`. Если файла нет или state не подходит, просто продолжай обычный веб-логин.
+- На каждом важном шаге обязательно используй `send_message`: открыл логин, ждёшь 2FA, код введён, вход успешен, упёрся в блокер. Молчать дольше 20 секунд нельзя.
+- Используй только официальный веб-логин Apple через agent-browser.
+- Никогда не ходи напрямую в private Apple API вроде fmipmobile.icloud.com, не пиши Python/curl-скрипты для обхода логина и не пытайся вручную разбирать cookie, токены или localStorage.
+- Не читай полные screenshot через `Read` и не занимайся pixel hunting, если можно понять состояние страницы через URL, snapshot и обычные поля/кнопки. Screenshot допустим только как крайняя диагностика, не как основной способ логина.
+- После запроса 2FA сразу попроси у Эмиля 6-значный код через `send_message` и остановись.
+- После получения кода делай только три шага: ввести код, дождаться результата, коротко сообщить статус через `send_message`.
+- Если Apple просит ещё один 2FA-код, просто попроси новый код. Не переключайся на альтернативные домены и не начинай новый сценарий логина с нуля без явной причины.
+- После успешного входа сразу сохрани state в `/workspace/group/apple-auth.json`, потом один раз открой целевую ссылку Find My. Не начинай заново email/password flow в том же run, если вход уже прошёл.
+- Для каждого Apple-экрана разрешены максимум две разные попытки взаимодействия. Если после этого всё ещё блокер, напиши точную причину через `send_message` и остановись.
+- Если после успешного логина Apple всё равно показывает login iframe или shared link не открывается, сообщи точный блокер и остановись. Не уходи в бесконечную отладку iframe, cookies или storage.
+- Если логин удался, сохрани browser state в /workspace/group/apple-auth.json и при следующих задачах сначала попробуй agent-browser state load /workspace/group/apple-auth.json.
+- Если логин не удался, сразу напиши точный блокер. Не продолжай бесконечные попытки молча.
+
 ## Phone Calls
 
 You can make AI-powered phone calls using the `make_call` MCP tool. The AI will call the number, have a real-time voice conversation following your instructions, and return the transcript when the call completes.
@@ -222,4 +241,3 @@ Example instruction for a Spanish restaurant:
 
 ### Результат разговора
 - По завершении разговора отправь ТОЛЬКО перевод транскрипта на русский (если разговор был не на русском). Не отправляй статус, продолжительность или другую мета-информацию.
-

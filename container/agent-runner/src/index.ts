@@ -124,7 +124,73 @@ function buildMessageContent(text: string): string | ContentBlock[] {
 
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
+const IPC_MESSAGES_DIR = '/workspace/ipc/messages';
 const IPC_POLL_MS = 500;
+const APPLE_PROGRESS_IDLE_MS = 25_000;
+const APPLE_PROGRESS_POLL_MS = 5_000;
+
+function writeIpcMessage(
+  chatJid: string,
+  groupFolder: string,
+  text: string,
+  sender?: string,
+): void {
+  fs.mkdirSync(IPC_MESSAGES_DIR, { recursive: true });
+  const data: Record<string, string | undefined> = {
+    type: 'message',
+    chatJid,
+    text,
+    sender,
+    groupFolder,
+    timestamp: new Date().toISOString(),
+  };
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+  const filepath = path.join(IPC_MESSAGES_DIR, filename);
+  const tempPath = `${filepath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+  fs.renameSync(tempPath, filepath);
+}
+
+function isAppleRelatedPrompt(text: string): boolean {
+  return /apple|icloud|find my|find\.apple\.com|apple id|gmrash@icloud\.com|айклауд|эппл/i.test(
+    text,
+  );
+}
+
+function normalizeVisibleText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function extractAssistantText(
+  message: unknown,
+): string | null {
+  if (
+    !message ||
+    typeof message !== 'object' ||
+    !('type' in message) ||
+    (message as { type?: string }).type !== 'assistant' ||
+    !('message' in message)
+  ) {
+    return null;
+  }
+
+  const content = (message as { message?: { content?: unknown } }).message?.content;
+  if (!Array.isArray(content)) return null;
+
+  const text = content
+    .filter(
+      (item): item is { type: 'text'; text: string } =>
+        !!item &&
+        typeof item === 'object' &&
+        (item as { type?: string }).type === 'text' &&
+        typeof (item as { text?: unknown }).text === 'string',
+    )
+    .map((item) => item.text)
+    .join('\n');
+
+  const normalized = normalizeVisibleText(text);
+  return normalized || null;
+}
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -187,6 +253,15 @@ function writeOutput(output: ContainerOutput): void {
 
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
+}
+
+function getRetriableApiError(text: string | null): string | null {
+  if (!text) return null;
+  const match = text.match(/^API Error:\s*(\d{3})\b[\s\S]*$/);
+  if (!match) return null;
+
+  const statusCode = Number(match[1]);
+  return statusCode >= 500 ? text : null;
 }
 
 function getSessionSummary(
@@ -447,6 +522,38 @@ async function runQuery(
 }> {
   const stream = new MessageStream();
   stream.push(prompt);
+  const appleProgressMode =
+    containerInput.groupFolder === 'telegram_main' &&
+    isAppleRelatedPrompt(prompt);
+  let lastVisibleProgressAt = Date.now();
+  let lastForwardedProgressText = '';
+  let appleHeartbeat: ReturnType<typeof setInterval> | null = null;
+
+  const sendAppleProgress = (text: string): void => {
+    if (!appleProgressMode) return;
+    const normalized = normalizeVisibleText(text);
+    if (!normalized || normalized === lastForwardedProgressText) return;
+    writeIpcMessage(
+      containerInput.chatJid,
+      containerInput.groupFolder,
+      normalized,
+    );
+    lastForwardedProgressText = normalized;
+    lastVisibleProgressAt = Date.now();
+    log(`Apple progress sent: ${normalized.slice(0, 200)}`);
+  };
+
+  if (appleProgressMode) {
+    sendAppleProgress(
+      'Начал Apple-вход. Если понадобится новый код или будет блокер, напишу сразу.',
+    );
+    appleHeartbeat = setInterval(() => {
+      if (Date.now() - lastVisibleProgressAt < APPLE_PROGRESS_IDLE_MS) return;
+      sendAppleProgress(
+        'Apple-вход ещё в процессе. Если понадобится новый 2FA-код или будет блокер, напишу отдельно.',
+      );
+    }, APPLE_PROGRESS_POLL_MS);
+  }
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -566,6 +673,13 @@ async function runQuery(
       lastAssistantUuid = (message as { uuid: string }).uuid;
     }
 
+    if (appleProgressMode && message.type === 'assistant') {
+      const assistantText = extractAssistantText(message);
+      if (assistantText) {
+        sendAppleProgress(assistantText);
+      }
+    }
+
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);
@@ -587,11 +701,25 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
+      lastVisibleProgressAt = Date.now();
       const textResult =
         'result' in message ? (message as { result?: string }).result : null;
       log(
         `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
       );
+
+      const retriableApiError = getRetriableApiError(textResult || null);
+      if (retriableApiError) {
+        log(`Retriable API error detected: ${retriableApiError.slice(0, 200)}`);
+        writeOutput({
+          status: 'error',
+          result: null,
+          newSessionId,
+          error: retriableApiError,
+        });
+        continue;
+      }
+
       writeOutput({
         status: 'success',
         result: textResult || null,
@@ -601,6 +729,7 @@ async function runQuery(
   }
 
   ipcPolling = false;
+  if (appleHeartbeat) clearInterval(appleHeartbeat);
   log(
     `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
   );

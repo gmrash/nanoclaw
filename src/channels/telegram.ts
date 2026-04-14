@@ -122,6 +122,13 @@ async function sendTelegramMessage(
   text: string,
   options: { message_thread_id?: number } = {},
 ): Promise<number | null> {
+  // Telegram Markdown breaks bare URLs with underscores, which turns
+  // published page links into invalid links in the chat UI.
+  if (/https?:\/\/\S*_\S*/.test(text)) {
+    const msg = await api.sendMessage(chatId, text, options);
+    return msg.message_id;
+  }
+
   try {
     const msg = await api.sendMessage(chatId, text, {
       ...options,

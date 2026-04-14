@@ -370,7 +370,7 @@ server.tool(
 
 server.tool(
   'publish_html',
-  'Publish a public single-file HTML page for the current group and send the public link back to chat. Use this by default for dashboards, charts, graphs, diagrams, reports, and data visualizations unless the user explicitly requests a static image. The HTML must be self-contained with inline CSS/JS only. Reuse the same slug to overwrite the existing page at the same URL.',
+  'Publish a public single-file HTML page for the current group and send the public link back to chat. This tool already sends the link to chat, so do not repeat the same link again in normal assistant output. If you have nothing else to add, return only an <internal> note. Use this by default for dashboards, charts, graphs, diagrams, reports, and data visualizations unless the user explicitly requests a static image. The HTML must be self-contained with inline CSS/JS only. Reuse the same slug to overwrite the existing page at the same URL.',
   {
     slug: z
       .string()
@@ -413,7 +413,7 @@ server.tool(
         content: [
           {
             type: 'text' as const,
-            text: `Published HTML page.\nURL: ${publicUrl}\nFile: ${filePath}`,
+            text: `Published HTML page and sent the link to chat.\nURL: ${publicUrl}\nFile: ${filePath}`,
           },
         ],
       };
