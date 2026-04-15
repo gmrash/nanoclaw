@@ -323,6 +323,7 @@ function buildVolumeMounts(
 async function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  groupFolder: string,
   agentIdentifier?: string,
 ): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
@@ -356,6 +357,13 @@ async function buildContainerArgs(
   for (const key of passthroughEnvVars) {
     const val = process.env[key];
     if (val) args.push('-e', `${key}=${val}`);
+  }
+
+  // telegram_main uses a persistent Chromium profile so Apple / Find My auth
+  // survives across separate container runs and monitor checks.
+  if (groupFolder === 'telegram_main') {
+    args.push('-e', 'AGENT_BROWSER_PROFILE=/workspace/group/agent-browser-profile');
+    args.push('-e', 'AGENT_BROWSER_SESSION=telegram-main');
   }
 
   if (PUBLIC_BASE_URL) {
@@ -409,6 +417,7 @@ export async function runContainerAgent(
   const containerArgs = await buildContainerArgs(
     mounts,
     containerName,
+    group.folder,
     agentIdentifier,
   );
 

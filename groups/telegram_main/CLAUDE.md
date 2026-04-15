@@ -188,19 +188,31 @@ Example: When the user asks you to message someone on WhatsApp, use `send_whatsa
 Когда задача связана с Apple-авторизацией, iCloud или Find My, работай только через браузерный flow и не импровизируй.
 
 Правила:
-- Перед новым Apple-логином сначала попробуй `agent-browser state load /workspace/group/apple-auth.json`. Если файла нет или state не подходит, просто продолжай обычный веб-логин.
+- Для Apple / Find My в `telegram_main` используй общий persistent browser profile: `/workspace/group/agent-browser-profile`. Не удаляй его и не создавай временные отдельные профили.
+- Перед новым Apple-логином сначала попробуй существующий browser profile. `agent-browser state load /workspace/group/apple-auth.json` допустим только как запасной импорт, если профиль пустой или явно сломан.
 - На каждом важном шаге обязательно используй `send_message`: открыл логин, ждёшь 2FA, код введён, вход успешен, упёрся в блокер. Молчать дольше 20 секунд нельзя.
 - Используй только официальный веб-логин Apple через agent-browser.
 - Никогда не ходи напрямую в private Apple API вроде fmipmobile.icloud.com, не пиши Python/curl-скрипты для обхода логина и не пытайся вручную разбирать cookie, токены или localStorage.
 - Не читай полные screenshot через `Read` и не занимайся pixel hunting, если можно понять состояние страницы через URL, snapshot и обычные поля/кнопки. Screenshot допустим только как крайняя диагностика, не как основной способ логина.
+- Если стартуешь с shared link Find My, оставайся в текущем контексте `find.apple.com` и жми `Use Apple Account`. Никогда не вытаскивай и не открывай вручную сырой URL вида `https://idmsa.apple.com/appleauth/auth/authorize/signin?...response_mode=web_message...`.
+- Страница `account.apple.com` сама по себе не считается успехом. Успех — это когда shared link на `find.apple.com` реально авторизован и показывает данные предмета.
 - После запроса 2FA сразу попроси у Эмиля 6-значный код через `send_message` и остановись.
 - После получения кода делай только три шага: ввести код, дождаться результата, коротко сообщить статус через `send_message`.
 - Если Apple просит ещё один 2FA-код, просто попроси новый код. Не переключайся на альтернативные домены и не начинай новый сценарий логина с нуля без явной причины.
-- После успешного входа сразу сохрани state в `/workspace/group/apple-auth.json`, потом один раз открой целевую ссылку Find My. Не начинай заново email/password flow в том же run, если вход уже прошёл.
+- После успешного входа считай источником истины browser profile `/workspace/group/agent-browser-profile`. Дополнительно сохрани backup-state в `/workspace/group/apple-auth.json`, потом один раз открой целевую ссылку Find My. Не начинай заново email/password flow в том же run, если вход уже прошёл.
 - Для каждого Apple-экрана разрешены максимум две разные попытки взаимодействия. Если после этого всё ещё блокер, напиши точную причину через `send_message` и остановись.
 - Если после успешного логина Apple всё равно показывает login iframe или shared link не открывается, сообщи точный блокер и остановись. Не уходи в бесконечную отладку iframe, cookies или storage.
 - Если логин удался, сохрани browser state в /workspace/group/apple-auth.json и при следующих задачах сначала попробуй agent-browser state load /workspace/group/apple-auth.json.
 - Если логин не удался, сразу напиши точный блокер. Не продолжай бесконечные попытки молча.
+- Для повторяющегося мониторинга Find My НЕ используй встроенные Claude `CronCreate` / `CronList` / `CronDelete` и не строй session-only cron-задачи. Они живут в Claude-сессии, плохо переживают Apple auth и дают ложные `session expired`.
+- Для мониторинга используй выделенный сервис на хосте:
+  - конфиг: `/workspace/group/findmy-monitor-config.json`
+  - лог: `/workspace/group/scooter_log.txt`
+  - browser profile: `/workspace/group/agent-browser-profile`
+  - state: `/workspace/group/apple-auth.json`
+  - управление: `systemctl restart nanoclaw-findmy-monitor` и `systemctl status nanoclaw-findmy-monitor --no-pager`
+- Если пользователь просит начать/изменить мониторинг, обнови `findmy-monitor-config.json` и перезапусти `nanoclaw-findmy-monitor`. Не создавай для этого cron внутри Claude.
+- Если пользователь вручную перелогинил Apple, сервис должен использовать тот же browser profile и продолжить работу на следующем цикле. `apple-auth.json` — это backup/signal, а не основной источник живой Apple-сессии.
 
 ## Phone Calls
 

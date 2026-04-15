@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+REAL_AGENT_BROWSER="/usr/local/lib/node_modules/agent-browser/bin/agent-browser-linux-x64"
+
+if [ ! -x "$REAL_AGENT_BROWSER" ]; then
+  echo "agent-browser wrapper error: real binary not found at $REAL_AGENT_BROWSER" >&2
+  exit 127
+fi
+
+if [ "${1:-}" = "open" ] && [ $# -ge 2 ]; then
+  url="$2"
+  case "$url" in
+    *idmsa.apple.com/appleauth/auth/authorize/signin*response_mode=web_message*)
+      cat >&2 <<'EOF'
+Blocked: raw Apple OAuth authorize URLs must not be opened as top-level pages.
+Stay in the existing Find My page context, click "Use Apple Account", and complete the auth flow there so it can return to find.apple.com correctly.
+EOF
+      exit 64
+      ;;
+  esac
+fi
+
+exec "$REAL_AGENT_BROWSER" "$@"

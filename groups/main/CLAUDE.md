@@ -86,20 +86,32 @@ Anthropic credentials must be either an API key from console.anthropic.com (`ANT
 For Apple login and Find My tasks, use a strict browser-only flow.
 
 Rules:
-- Before a fresh Apple login, first try `agent-browser state load /workspace/group/apple-auth.json`. If it fails or the state is stale, continue with normal web login.
+- For Apple / Find My in `telegram_main`, use the shared persistent browser profile at `/workspace/group/agent-browser-profile`. Do not delete it or create throwaway Apple profiles.
+- Before a fresh Apple login, first try the existing browser profile. `agent-browser state load /workspace/group/apple-auth.json` is only a fallback import if the profile is empty or clearly broken.
 - Use `send_message` for every major Apple status: opening login, waiting for 2FA, code entered, login succeeded, blocked. Do not stay silent for more than 20 seconds.
 - Use only the official Apple web login in agent-browser.
 - Do not call private Apple endpoints like fmipmobile.icloud.com directly.
 - Do not write scripts to replay cookies, tokens, or bypass the browser flow.
 - Do not use screenshot OCR or `Read` on full screenshots as the main Apple login method when URL, snapshot, and regular controls are enough.
+- When starting from a Find My shared link, stay in that Find My browser context and click `Use Apple Account`. Never extract and open a raw `https://idmsa.apple.com/appleauth/auth/authorize/signin?...response_mode=web_message...` URL as a top-level page.
+- `account.apple.com` alone is not a successful result. Success means the shared Find My page on `find.apple.com` is authenticated and shows the item/location data.
 - When Apple asks for 2FA, ask the user for the 6-digit code with `send_message` and stop until they reply.
 - After receiving the code, only enter it, wait for the next page state, and report the result with `send_message`.
 - If Apple asks for another code, ask for another code. Do not branch into alternative login flows.
-- After login succeeds, save state to `/workspace/group/apple-auth.json` and open the target Find My link once. Do not restart the email/password flow in the same run after a successful login.
+- After login succeeds, treat `/workspace/group/agent-browser-profile` as the primary live Apple session. Also save backup state to `/workspace/group/apple-auth.json` and open the target Find My link once. Do not restart the email/password flow in the same run after a successful login.
 - For each Apple page, use at most two interaction strategies. If still blocked, send the exact blocker and stop.
 - If Find My still shows a login iframe after a successful Apple login, report the blocker and stop. Do not debug iframe internals, cookies, or storage loops.
 - If login succeeds, save state to /workspace/group/apple-auth.json and reuse it before starting a new login.
 - If login fails, report the exact blocker and stop.
+- For recurring Find My monitoring, do NOT use Claude `CronCreate` / `CronList` / `CronDelete` session-only jobs. They are tied to one Claude session and are unreliable for Apple auth.
+- Use the dedicated host service instead:
+  - config: `/workspace/group/findmy-monitor-config.json`
+  - log: `/workspace/group/scooter_log.txt`
+  - browser profile: `/workspace/group/agent-browser-profile`
+  - auth state: `/workspace/group/apple-auth.json`
+  - control: `systemctl restart nanoclaw-findmy-monitor` and `systemctl status nanoclaw-findmy-monitor --no-pager`
+- If the user wants to start or change recurring monitoring, update the config file and restart the service. Do not build an agent-only cron workflow for Apple monitoring.
+- If the user manually logs into Apple again, reuse the same shared browser profile so the monitor can continue without rebuilding the workflow.
 
 ## Container Mounts
 

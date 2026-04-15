@@ -23,6 +23,25 @@ agent-browser close             # Close browser
 3. Interact using refs from the snapshot
 4. Re-snapshot after navigation or significant DOM changes
 
+## Apple / iCloud auth guardrails
+
+For Apple login, iCloud, and Find My tasks:
+- First try `agent-browser state load /workspace/group/apple-auth.json` before a fresh Apple login.
+- Use the `send_message` tool for every major status: opening login, waiting for 2FA, code entered, login succeeded, blocked.
+- Stay inside the browser flow. Do not call private Apple APIs like `fmipmobile.icloud.com` directly.
+- Do not write scripts to inspect or replay cookies, tokens, or local storage.
+- Do not use screenshot OCR or `Read` on full screenshots as the main Apple login method when URL, snapshot, and regular controls are enough.
+- When starting from a Find My shared link, stay in the same browser context and click `Use Apple Account`. Do not extract a raw `idmsa.apple.com/appleauth/auth/authorize/signin` URL and open it as a top-level page.
+- `account.apple.com` by itself is not success. Success means the shared Find My page on `find.apple.com` is authenticated and shows the item data.
+- When Apple requests 2FA, ask the user for the 6-digit code with `send_message` and wait.
+- After receiving a code, only enter the code, wait for the next screen, and report the outcome with `send_message`.
+- If Apple requests another code, ask for another code. Do not start alternate login strategies.
+- After login succeeds, save state to `/workspace/group/apple-auth.json` and open the target Find My link once. Do not restart email/password flow in the same run.
+- For each Apple page, use at most two interaction strategies. If still blocked, send the exact blocker and stop.
+- If Find My still shows a login iframe after successful Apple login, report the blocker and stop. Do not debug iframe internals, cookies, or storage loops.
+- If the browser step takes more than 20 seconds, send a short status update with `send_message` instead of going silent.
+- If login succeeds, save state and reuse it on the next attempt.
+
 ## Commands
 
 ### Navigation
