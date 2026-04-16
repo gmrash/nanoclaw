@@ -362,7 +362,10 @@ async function buildContainerArgs(
   // telegram_main uses a persistent Chromium profile so Apple / Find My auth
   // survives across separate container runs and monitor checks.
   if (groupFolder === 'telegram_main') {
-    args.push('-e', 'AGENT_BROWSER_PROFILE=/workspace/group/agent-browser-profile');
+    args.push(
+      '-e',
+      'AGENT_BROWSER_PROFILE=/workspace/group/agent-browser-profile',
+    );
     args.push('-e', 'AGENT_BROWSER_SESSION=telegram-main');
   }
 
